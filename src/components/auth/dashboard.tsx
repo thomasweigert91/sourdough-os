@@ -1,20 +1,35 @@
 "use client";
 
+import { QueryClientContext } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useContext, useState, type ReactNode } from "react";
 import { signOut, useSession } from "@/lib/auth-client";
 import { GENERIC_ERROR_MESSAGE } from "@/lib/auth-form";
+import { OFFLINE_SIGN_OUT_MESSAGE } from "@/lib/offline-messages";
+import { clearOfflineData } from "@/lib/query/clear-offline-data";
+import { useOnlineStatus } from "@/lib/query/online";
 
-export function Dashboard() {
+export interface DashboardProps {
+  /** Slot vor Fehlermeldung und Abmelden-Button. */
+  children?: ReactNode;
+}
+
+export function Dashboard({ children }: DashboardProps) {
   const { data } = useSession();
   const router = useRouter();
+  // Optional: Dashboard funktioniert auch ohne QueryProvider.
+  const queryClient = useContext(QueryClientContext);
+  const online = useOnlineStatus();
   const [error, setError] = useState<string | null>(null);
   const [isSigningOut, setIsSigningOut] = useState(false);
 
-  if (!data) return null;
-  const { user } = data;
-
   async function handleSignOut() {
+    if (!online) {
+      // Offline erreicht signOut den Server nicht (httpOnly-Cookie): Sitzung und Daten bleiben.
+      setError(OFFLINE_SIGN_OUT_MESSAGE);
+      return;
+    }
+
     setError(null);
     setIsSigningOut(true);
     try {
@@ -24,9 +39,12 @@ export function Dashboard() {
         setIsSigningOut(false);
         return;
       }
+      // Lokale Daten erst leeren, wenn die Sitzung wirklich beendet ist.
+      clearOfflineData(queryClient);
       router.replace("/login");
     } catch {
-      setError(GENERIC_ERROR_MESSAGE);
+      // Exception = Netzwerkfehler: wie offline behandeln, Daten bleiben erhalten.
+      setError(OFFLINE_SIGN_OUT_MESSAGE);
       setIsSigningOut(false);
     }
   }
@@ -36,8 +54,13 @@ export function Dashboard() {
       <h1 className="text-3xl font-semibold tracking-tight text-zinc-950 dark:text-zinc-50">
         Dashboard
       </h1>
-      <p className="text-lg text-zinc-950 dark:text-zinc-50">{user.name}</p>
-      <p className="break-all text-zinc-600 dark:text-zinc-400">{user.email}</p>
+      {data ? (
+        <>
+          <p className="text-lg text-zinc-950 dark:text-zinc-50">{data.user.name}</p>
+          <p className="break-all text-zinc-600 dark:text-zinc-400">{data.user.email}</p>
+        </>
+      ) : null}
+      {children}
       {error ? (
         <p role="alert" className="text-sm font-medium text-red-700 dark:text-red-400">
           {error}

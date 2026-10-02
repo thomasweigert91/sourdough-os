@@ -147,3 +147,54 @@ describe("F004 SessionGate", () => {
     expect(screen.queryByText("Geheimer Inhalt")).not.toBeInTheDocument();
   });
 });
+
+describe("F005 SessionGate showChildrenWhilePending", () => {
+  it("F005/AC-4 zeigt mit showChildrenWhilePending die Kinder schon während die Sitzung lädt (require=user)", () => {
+    mocks.useSession.mockReturnValue(PENDING);
+    render(
+      <SessionGate require="user" showChildrenWhilePending>
+        <Protected />
+      </SessionGate>,
+    );
+
+    expect(screen.getByText("Geheimer Inhalt")).toBeInTheDocument();
+    expect(screen.queryByText("Lade Sitzung …")).not.toBeInTheDocument();
+    expect(mocks.replace).not.toHaveBeenCalled();
+  });
+
+  it("F005/AC-4 showChildrenWhilePending wirkt nicht bei require=guest", () => {
+    mocks.useSession.mockReturnValue(PENDING);
+    render(
+      <SessionGate require="guest" showChildrenWhilePending>
+        <Protected />
+      </SessionGate>,
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent("Lade Sitzung …");
+    expect(screen.queryByText("Geheimer Inhalt")).not.toBeInTheDocument();
+  });
+
+  it("F005/AC-4 mit showChildrenWhilePending={false} bleibt es beim Ladetext", () => {
+    mocks.useSession.mockReturnValue(PENDING);
+    render(
+      <SessionGate require="user" showChildrenWhilePending={false}>
+        <Protected />
+      </SessionGate>,
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent("Lade Sitzung …");
+    expect(screen.queryByText("Geheimer Inhalt")).not.toBeInTheDocument();
+  });
+
+  it("F005/AC-4 leitet trotz showChildrenWhilePending ohne Sitzung auf /login um", async () => {
+    mocks.useSession.mockReturnValue(NO_SESSION);
+    render(
+      <SessionGate require="user" showChildrenWhilePending>
+        <Protected />
+      </SessionGate>,
+    );
+
+    await waitFor(() => expect(mocks.replace).toHaveBeenCalledWith("/login"));
+    expect(screen.queryByText("Geheimer Inhalt")).not.toBeInTheDocument();
+  });
+});

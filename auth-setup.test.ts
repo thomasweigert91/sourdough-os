@@ -57,10 +57,11 @@ describe("F003 Projekt-Setup für Better-Auth", () => {
   });
 
   describe("Migration 0001 für das Auth-Schema", () => {
-    it("F003/AC-2 das Journal enthält 0000_init und genau einen weiteren Eintrag 0001_*", () => {
+    // Gelockert in F005 (vom Nutzer genehmigt): spätere Migrationen wie 0002_* sind erlaubt.
+    it("F003/AC-2 das Journal beginnt mit 0000_init, gefolgt von einem Eintrag 0001_*", () => {
       const journal = readJson<Journal>("drizzle/meta/_journal.json");
 
-      expect(journal.entries).toHaveLength(2);
+      expect(journal.entries.length).toBeGreaterThanOrEqual(2);
       expect(journal.entries[0].tag).toBe("0000_init");
       expect(journal.entries[1].tag).toMatch(/^0001_.+/);
     });

@@ -1,14 +1,26 @@
+import { AppHeader } from "@/components/app/app-header";
+import { CachedSessionGate } from "@/components/app/cached-session-gate";
+import { OfflineSync } from "@/components/app/offline-sync";
+import { QueryProvider } from "@/components/app/query-provider";
+import { TemperatureUnitSetting } from "@/components/app/temperature-unit-setting";
 import { Dashboard } from "@/components/auth/dashboard";
-import { SessionGate } from "@/components/auth/session-gate";
 
 export default function DashboardPage() {
   return (
-    <main className="flex flex-1 items-center justify-center bg-zinc-50 py-16 dark:bg-black">
-      <div className="w-full max-w-sm px-4">
-        <SessionGate require="user">
-          <Dashboard />
-        </SessionGate>
+    <QueryProvider>
+      <div className="flex flex-1 flex-col bg-zinc-50 dark:bg-black">
+        <CachedSessionGate>
+          <OfflineSync />
+          <AppHeader />
+          <main className="flex flex-1 items-center justify-center py-16">
+            <div className="w-full max-w-sm px-4">
+              <Dashboard>
+                <TemperatureUnitSetting />
+              </Dashboard>
+            </div>
+          </main>
+        </CachedSessionGate>
       </div>
-    </main>
+    </QueryProvider>
   );
 }

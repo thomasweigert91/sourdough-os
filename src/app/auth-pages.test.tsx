@@ -1,8 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { onlineManager } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resetSyncUser } from "@/lib/query/sync-user";
+import { jsonResponse, seedPersistedCache } from "@/test/query-client";
 
 const mocks = vi.hoisted(() => ({
   signUpEmail: vi.fn(),
@@ -46,6 +50,11 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  onlineManager.setOnline(true);
+  localStorage.clear();
+  resetSyncUser();
 });
 
 describe("F004 Seiten /dashboard, /login, /register", () => {
@@ -124,5 +133,56 @@ describe("F004 Seiten /dashboard, /login, /register", () => {
     const source = fs.readFileSync(path.join(APP_DIR, "layout.tsx"), "utf8");
     expect(source).toMatch(/<html[\s\S]*?lang="de"/);
     expect(source).not.toMatch(/lang="en"/);
+  });
+});
+
+describe("F005 Seite /dashboard: Offline-Hinweis und lokaler Cache", () => {
+  const OFFLINE = "Offline – Änderungen werden lokal gespeichert";
+  const SESSION_U1 = {
+    data: { user: { id: "u1", name: "Max Mustermann", email: "max@example.com" }, session: {} },
+    isPending: false,
+    error: null,
+  };
+
+  it("F005/AC-1 zeigt auf /dashboard bei Verbindungsverlust den Hinweis im Kopfbereich, die Seite bleibt bedienbar", async () => {
+    const user = userEvent.setup();
+    mocks.useSession.mockReturnValue(SESSION_U1);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse({ temperatureUnit: "C", updatedAt: null })),
+    );
+    render(<DashboardPage />);
+    expect(await screen.findByRole("radio", { name: "Celsius (°C)" })).toBeChecked();
+    const banner = screen.getByRole("banner");
+    expect(within(banner).queryByText(OFFLINE)).not.toBeInTheDocument();
+
+    vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    act(() => {
+      window.dispatchEvent(new Event("offline"));
+    });
+
+    expect(within(screen.getByRole("banner")).getByRole("status")).toHaveTextContent(OFFLINE);
+    expect(screen.getByRole("button", { name: "Abmelden" })).toBeEnabled();
+    await user.click(screen.getByRole("radio", { name: "Fahrenheit (°F)" }));
+    expect(screen.getByRole("radio", { name: "Fahrenheit (°F)" })).toBeChecked();
+    expect(screen.getByRole("heading", { name: "Dashboard" })).toBeInTheDocument();
+  });
+
+  it("F005/AC-4 zeigt auf /dashboard mit gespeichertem Cache sofort Dashboard und Einheit, bevor Sitzung und Server antworten", async () => {
+    seedPersistedCache([
+      { queryKey: ["offline-user"], data: { id: "u1" } },
+      { queryKey: ["preferences"], data: { temperatureUnit: "F" } },
+    ]);
+    mocks.useSession.mockReturnValue(PENDING);
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+
+    render(<DashboardPage />);
+
+    expect(await screen.findByRole("heading", { name: "Dashboard" })).toBeInTheDocument();
+    expect(await screen.findByRole("radio", { name: "Fahrenheit (°F)" })).toBeChecked();
+    expect(screen.queryByText("Lade Sitzung …")).not.toBeInTheDocument();
+    expect(screen.queryByText("Lade Einstellungen …")).not.toBeInTheDocument();
+    expect(screen.getByRole("banner")).toBeInTheDocument();
+    expect(mocks.replace).not.toHaveBeenCalled();
   });
 });
