@@ -9,9 +9,25 @@ import {
 
 const FILE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);
+const AGENT_TOOLS = new Set(['Agent', 'Task']);
+// Bleibt ein SubagentStop aus (Absturz, abgelehnter Start), verfällt der Eintrag nach dieser Zeit.
+const RUNNING_TTL_MS = 2 * 60 * 60 * 1000;
 
 const emit = (obj) => process.stdout.write(JSON.stringify(obj));
 const filePathOf = (toolInput) => toolInput.file_path ?? toolInput.notebook_path ?? null;
+
+/** Laufende Rollen-Subagenten des Features, ohne verfallene Einträge. */
+function runningRoles(feature) {
+  const now = Date.now();
+  feature.running = (feature.running ?? []).filter((r) => now - Date.parse(r.since) < RUNNING_TTL_MS);
+  return feature.running;
+}
+
+function finishRole(feature, role) {
+  const running = runningRoles(feature);
+  const i = running.findIndex((r) => r.role === role);
+  if (i !== -1) running.splice(i, 1);
+}
 
 /** PreToolUse: Schreibrechte je Phase und Rolle durchsetzen. */
 function preTool(input) {
@@ -23,6 +39,13 @@ function preTool(input) {
     if (file) reason = writeDenial(state, loadConfig(), relToRoot(file), input.agent_type);
   } else if (SHELL_TOOLS.has(input.tool_name) && toolInput.command) {
     reason = commandDenial(state, toolInput.command, input.agent_type);
+  } else if (AGENT_TOOLS.has(input.tool_name) && ROLES[toolInput.subagent_type]) {
+    // Start eines Rollen-Subagenten merken, damit das Stop-Gate den wartenden Hauptagenten nicht blockiert.
+    const feature = activeFeature(state);
+    if (feature) {
+      runningRoles(feature).push({ role: toolInput.subagent_type, since: new Date().toISOString() });
+      saveState(state);
+    }
   }
   if (reason) {
     emit({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: `[workflow] ${reason}` } });
@@ -53,26 +76,36 @@ function postTool(input) {
 /**
  * Stop / SubagentStop: Eine Rolle darf erst aufhören, wenn das Gate ihrer Phase grün ist.
  * Nach max_attempts Fehlversuchen wird an den Nutzer eskaliert statt endlos zu schleifen.
+ * Der Hauptagent wird nicht geprüft, solange die Rolle der Phase im Hintergrund arbeitet:
+ * Er wartet dann nur und würde sonst Versuche verbrauchen, die der Rolle zustehen.
  */
 function stopGate(input, isSubagent) {
   const state = loadState();
   const feature = activeFeature(state);
   if (!feature) return;
   const cfg = loadConfig();
+  // Die Rolle hört tatsächlich auf (kein Block): aus der Liste der laufenden Subagenten nehmen.
+  const stopped = () => {
+    if (isSubagent) finishRole(feature, input.agent_type);
+    saveState(state);
+  };
 
   if (isSubagent) {
     // Fremde Subagenten (Explore, Plan, ...) und Rollen außerhalb ihrer Phase nicht blockieren.
-    if (ROLES[input.agent_type] !== feature.phase) return;
+    if (!ROLES[input.agent_type]) return;
+    if (ROLES[input.agent_type] !== feature.phase) return stopped();
     if (input.agent_type === 'code-reviewer') feature.reviewer_hash = diffHash(feature.base);
   } else if (!cfg.stop_gate_phases.includes(feature.phase)) {
     return;
+  } else if (runningRoles(feature).some((r) => ROLES[r.role] === feature.phase)) {
+    return saveState(state);
   }
-  if (feature.escalated) return saveState(state);
+  if (feature.escalated) return stopped();
 
   const res = GATES[feature.phase](feature, cfg);
   if (!res.errors.length) {
     feature.attempts = 0;
-    return saveState(state);
+    return stopped();
   }
 
   feature.attempts++;
@@ -80,7 +113,7 @@ function stopGate(input, isSubagent) {
   if (feature.attempts >= cfg.max_attempts) {
     feature.escalated = true;
     logEvent(feature, 'escalated');
-    saveState(state);
+    stopped();
     emit({ systemMessage: `[workflow] Gate "${feature.phase}" für ${feature.id} ist nach ${feature.attempts} Versuchen nicht grün. Bitte eingreifen (jede Nachricht setzt den Zähler zurück).\n\n${formatReport(feature, res)}` });
     return;
   }
