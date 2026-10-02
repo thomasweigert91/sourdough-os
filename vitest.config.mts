@@ -15,5 +15,9 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     setupFiles: "./vitest.setup.ts",
+    // Kalter better-auth-Import nach vi.resetModules() dauert unter voller Parallelität über 5 s (auth.test.ts).
+    testTimeout: 15000,
+    // Begrenzte Parallelität: Unter voller Last werden zeitabhängige Tests (u. a. offline-sync, auth) flaky.
+    maxWorkers: 4,
   },
 });
