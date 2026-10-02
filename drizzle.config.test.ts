@@ -50,7 +50,7 @@ describe("F002 drizzle.config.ts", () => {
     vi.resetModules();
   });
 
-  it("F002/AC-2 konfiguriert PostgreSQL, Schema-Datei und Migrationsordner und nutzt die direkte Verbindung", async () => {
+  it("F002/AC-2 F003/AC-2 konfiguriert PostgreSQL, Schema-Verzeichnis und Migrationsordner und nutzt die direkte Verbindung", async () => {
     vi.stubEnv("DATABASE_URL", POOLED_URL);
     vi.stubEnv("DATABASE_URL_UNPOOLED", UNPOOLED_URL);
 
@@ -58,7 +58,7 @@ describe("F002 drizzle.config.ts", () => {
 
     expect(config).toMatchObject({
       dialect: "postgresql",
-      schema: "./src/db/schema.ts",
+      schema: "./src/db/schema",
       out: "./drizzle",
       dbCredentials: { url: UNPOOLED_URL },
     });
