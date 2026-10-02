@@ -18,6 +18,7 @@ export const ARTIFACTS = { spec: 'ticket.md', plan: 'plan.md', review: 'review.m
 
 const TICKET_SECTIONS = ['Kontext', 'Ziel', 'Akzeptanzkriterien', 'Nicht im Scope', 'Offene Fragen'];
 const PLAN_SECTIONS = ['Ansatz', 'Betroffene Dateien', 'Komponenten & Datenfluss', 'Arbeitsschritte', 'Teststrategie', 'Risiken & Rollback'];
+const EXCEPTIONS_SECTION = 'Workflow-Ausnahmen';
 
 // ---------------------------------------------------------------- Konfiguration
 
@@ -36,6 +37,7 @@ const DEFAULT_CONFIG = {
   strict_wording: false,
   vague_words: ['schnell', 'einfach', 'benutzerfreundlich', 'intuitiv', 'performant', 'modern', 'flexibel', 'möglichst', 'ggf.', 'etc.', 'usw.', 'sollte', 'eventuell', 'nice', 'smooth'],
   red_output_must_mention_tests: true,
+  min_reason_length: 20,
   output_tail_lines: 40,
   command_timeout_sec: 600,
   skip_patterns: ['\\b(?:it|test|describe|suite)\\.(?:skip|todo|fails)\\b', '\\bx(?:it|test|describe)\\s*\\('],
@@ -128,6 +130,7 @@ export function globToRegExp(glob) {
 
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
 export const matchesAny = (file, globs) => globs.some((g) => globToRegExp(g).test(file));
+const isTestFile = (file, cfg) => matchesAny(file, [...cfg.test_globs, ...cfg.test_support_globs]);
 
 // ---------------------------------------------------------------- Git
 
@@ -183,6 +186,22 @@ export function diffText(base) {
   return text;
 }
 
+/**
+ * Seit `base` geänderte Produktionsdateien: weder Tests noch Workflow-Infrastruktur
+ * (die ist während eines Features ohnehin gesperrt und nur durch den Nutzer änderbar).
+ */
+function prodFiles(feature, cfg) {
+  return changedFiles(feature.base).filter((f) => !isTestFile(f, cfg) && !matchesAny(f, INFRA_GLOBS));
+}
+
+/** Inhalt aller geänderten Produktionsdateien: Pfad -> Hash (bzw. "gelöscht"). */
+export function prodFingerprint(feature, cfg) {
+  return Object.fromEntries(prodFiles(feature, cfg).map((f) => {
+    const abs = path.join(ROOT, f);
+    return [f, fs.existsSync(abs) ? sha(fs.readFileSync(abs)) : 'gelöscht'];
+  }));
+}
+
 // ---------------------------------------------------------------- Markdown
 
 export const stripComments = (md) => md.replace(/<!--[\s\S]*?-->/g, '');
@@ -222,6 +241,14 @@ export function parseAcceptanceCriteria(md) {
   return acs.map((a) => ({ ...a, body: a.body.join('\n') }));
 }
 
+/** Abschnitt für review.md mit allen Workflow-Ausnahmen des Features (leer, wenn keine). */
+export function exceptionsSection(feature) {
+  const list = feature.exceptions ?? [];
+  if (!list.length) return '';
+  const items = list.map((e) => `- \`${e.ts}\` **${e.type}** (${e.phase}): ${e.reason}\n  Bewertung: {{gerechtfertigt / nicht gerechtfertigt, mit Begründung}}`);
+  return `## ${EXCEPTIONS_SECTION}\n<!-- Vom Workflow eingefügt. Jede Ausnahme bewerten: War sie gerechtfertigt, verdeckt sie ein Problem? -->\n${items.join('\n')}\n\n`;
+}
+
 const unique = (arr) => [...new Set(arr)];
 const acRefs = (text) => unique(text.match(/\bAC-\d+\b/g) ?? []);
 
@@ -249,7 +276,7 @@ function checkLocked(feature, res, phase) {
   }
 }
 
-function ticketAcIds(feature) {
+export function ticketAcIds(feature) {
   const md = readArtifact(feature, 'spec');
   return md ? parseAcceptanceCriteria(md).map((a) => a.id) : [];
 }
@@ -365,13 +392,25 @@ export function scanTests(feature, cfg) {
   };
 }
 
-export function gateTests(feature, cfg) {
-  const res = newResult('tests');
+/** Tests dürfen gegenüber einem früheren Snapshot nicht geschwächt werden. */
+function checkTestIntegrity(snap, scan, res) {
+  const now = new Map(scan.tagged.map((f) => [f.path, f]));
+  for (const before of snap.tagged) {
+    const after = now.get(before.path);
+    if (!after) { res.errors.push(`Testdatei ${before.path} wurde gelöscht oder hat keine Feature-Tags mehr`); continue; }
+    const lostTags = before.tags.filter((t) => !after.tags.includes(t));
+    if (lostTags.length) res.errors.push(`${before.path}: Tests entfernt für ${lostTags.join(', ')}`);
+    if (after.assertions < before.assertions) res.errors.push(`${before.path}: Assertions reduziert (${before.assertions} → ${after.assertions})`);
+  }
+  if (scan.total_skips > snap.total_skips) res.errors.push(`Neue skip/todo-Markierungen in Testdateien (${snap.total_skips} → ${scan.total_skips})`);
+}
+
+/** Struktur der Akzeptanztests: Tags zu allen AC, Assertions, kein .only. Gibt den Scan zurück. */
+function checkTestStructure(feature, cfg, res) {
   checkLocked(feature, res, 'spec');
   checkLocked(feature, res, 'plan');
   const acIds = ticketAcIds(feature);
   const scan = scanTests(feature, cfg);
-  res.data.snapshot = scan;
 
   if (!scan.tagged.length) {
     res.errors.push(`Keine Testdatei enthält Tags "${feature.id}/AC-n". Jeder Test braucht den Tag im Testnamen, z. B. it('${feature.id}/AC-1 zeigt ...')`);
@@ -382,19 +421,101 @@ export function gateTests(feature, cfg) {
   if (unknown.length) res.errors.push(`Tests verweisen auf AC, die nicht im Ticket stehen: ${unknown.join(', ')}`);
   if (scan.only_files.length) res.errors.push(`.only in Testdateien (blendet andere Tests aus): ${scan.only_files.join(', ')}`);
   for (const f of scan.tagged) if (!f.assertions) res.errors.push(`${f.path}: keine Assertions (expect/assert) gefunden`);
+  return scan;
+}
+
+export function gateTests(feature, cfg) {
+  const res = newResult('tests');
+  const snapshot = checkTestStructure(feature, cfg, res);
+  res.data.snapshot = snapshot;
   if (res.errors.length) return res;
+
+  // Red-Ausnahme (allow-green): gilt nur für genau den Code-Stand, für den sie erteilt wurde.
+  const ex = feature.red_exception;
+  if (ex) {
+    const current = diffHash(feature.base);
+    if (ex.diff_hash === current) res.notes.push(`Red-Ausnahme aktiv (erteilt ${ex.ts}, Suite war grün). Grund: ${ex.reason}`);
+    else res.errors.push(`Red-Ausnahme ungültig: Der Code-Stand hat sich seit der Erteilung geändert (${ex.diff_hash} → ${current}). Erneut prüfen mit \`${WF} allow-green --reason "..."\`.`);
+    return res;
+  }
 
   // Red-Phase: Die neuen Tests müssen fehlschlagen, solange das Feature fehlt.
   const r = run(cfg.commands.test, cfg.command_timeout_sec);
   if (r.timedOut) res.errors.push(`Testlauf nach ${cfg.command_timeout_sec}s abgebrochen (Watch-Modus? Testbefehl muss sich selbst beenden)`);
   else if (r.code === 0) res.errors.push(`Testsuite ist grün. Die neuen Tests müssen vor der Implementierung FEHLSCHLAGEN (Red). Prüfe, ob sie das neue Verhalten wirklich testen.`);
   else if (cfg.red_output_must_mention_tests) {
-    const markers = [`${feature.id}/AC-`, ...scan.tagged.map((f) => path.posix.basename(f.path))];
+    const markers = [`${feature.id}/AC-`, ...snapshot.tagged.map((f) => path.posix.basename(f.path))];
     if (!markers.some((m) => r.out.includes(m))) {
       res.errors.push(`Testsuite schlägt fehl, aber nicht wegen der neuen Tests (Ausgabe nennt weder Tags noch Testdateien). Zuerst die bestehenden Fehler beheben:\n${indent(tail(r.out, cfg.output_tail_lines))}`);
     }
   }
   if (!res.errors.length) res.notes.push(`Red bestätigt: Testsuite schlägt fehl (Exit ${r.code}), neue Tests sind beteiligt.`);
+  return res;
+}
+
+/**
+ * Rücksprung, aus dem diese tests-Phase stammt: Fingerabdruck aus `back` oder, bei Rücksprüngen
+ * von vor der Einführung von allow-green, nur Zeitpunkt aus der Historie.
+ */
+function retestBase(feature) {
+  if (feature.retest_base) return feature.retest_base;
+  const ev = [...feature.history].reverse().find((e) => e.event === 'back');
+  if (!ev || ev.to !== 'tests' || !['implement', 'review'].includes(ev.from)) return null;
+  return { ts: ev.ts, from: ev.from, prod: null, acs: null, tests: null };
+}
+
+/**
+ * Voraussetzungen für allow-green (Red-Ausnahme nach Rücksprung in "tests"):
+ * seit dem Rücksprung nur Testdateien geändert, kein neues AC, Tests nicht geschwächt, Suite grün.
+ */
+export function checkAllowGreen(feature, cfg) {
+  const res = newResult('allow-green');
+  if (feature.phase !== 'tests') {
+    res.errors.push(`allow-green gilt nur in Phase "tests", aktuell ist "${feature.phase}".`);
+    return res;
+  }
+  const base = retestBase(feature);
+  if (!base) {
+    res.errors.push('allow-green ist nur nach einem Rücksprung aus "implement" oder "review" nach "tests" erlaubt. Für neue Tests gilt Red.');
+    return res;
+  }
+  res.data.base_ts = base.ts;
+
+  // 1. Seit dem Rücksprung nur Testdateien geändert.
+  if (base.prod) {
+    const now = prodFingerprint(feature, cfg);
+    const changed = unique([...Object.keys(base.prod), ...Object.keys(now)]).filter((f) => base.prod[f] !== now[f]).sort();
+    if (changed.length) res.errors.push(`Seit dem Rücksprung (${base.ts}) wurden Nicht-Testdateien geändert: ${changed.join(', ')}`);
+  } else {
+    const since = Date.parse(base.ts);
+    const changed = prodFiles(feature, cfg).filter((f) => {
+      const abs = path.join(ROOT, f);
+      return fs.existsSync(abs) && fs.statSync(abs).mtimeMs > since;
+    });
+    if (changed.length) res.errors.push(`Seit dem Rücksprung (${base.ts}) wurden Nicht-Testdateien geändert: ${changed.join(', ')}`);
+    res.warnings.push(`Der Rücksprung vom ${base.ts} stammt von vor allow-green und hat keinen Fingerabdruck. Geprüft wurde über Änderungszeiten; gelöschte Dateien und Abschwächungen gegenüber den alten Tests sind so nicht erkennbar.`);
+  }
+
+  // 2. Kein neues Akzeptanzkriterium (das Ticket selbst ist zusätzlich per Hash gesperrt).
+  const acIds = ticketAcIds(feature);
+  if (base.acs) {
+    const added = acIds.filter((id) => !base.acs.includes(id));
+    if (added.length) res.errors.push(`Neue Akzeptanzkriterien seit dem Rücksprung: ${added.join(', ')}. Neue AC brauchen Red.`);
+  } else if (!feature.hashes.spec) {
+    res.errors.push('Ticket ohne Hash-Sperre und ohne AC-Liste aus dem Rücksprung: neue AC nicht ausschließbar.');
+  }
+
+  // 3. Teststruktur wie im Gate, Tests gegenüber dem Stand vor dem Rücksprung nicht geschwächt.
+  const scanNow = checkTestStructure(feature, cfg, res);
+  if (base.tests) checkTestIntegrity(base.tests, scanNow, res);
+  if (res.errors.length) return res;
+
+  // 4. Suite grün.
+  const r = run(cfg.commands.test, cfg.command_timeout_sec);
+  if (r.timedOut) res.errors.push(`Testlauf nach ${cfg.command_timeout_sec}s abgebrochen`);
+  else if (r.code !== 0) res.errors.push(`Testsuite ist nicht grün (Exit ${r.code}). allow-green gilt nur für eine grüne Suite:\n${indent(tail(r.out, cfg.output_tail_lines))}`);
+  else res.notes.push(`Seit dem Rücksprung (${base.ts}) nur Testdateien geändert, keine neuen AC, Testsuite grün.`);
+  res.data.diff_hash = diffHash(feature.base);
   return res;
 }
 
@@ -406,24 +527,14 @@ export function gateImplement(feature, cfg) {
 
   // Test-Integrität: Tests dürfen nicht geschwächt werden, um grün zu werden.
   const snap = feature.test_snapshot;
-  const scan = scanTests(feature, cfg);
-  if (snap) {
-    const now = new Map(scan.tagged.map((f) => [f.path, f]));
-    for (const before of snap.tagged) {
-      const after = now.get(before.path);
-      if (!after) { res.errors.push(`Testdatei ${before.path} wurde gelöscht oder hat keine Feature-Tags mehr`); continue; }
-      const lostTags = before.tags.filter((t) => !after.tags.includes(t));
-      if (lostTags.length) res.errors.push(`${before.path}: Tests entfernt für ${lostTags.join(', ')}`);
-      if (after.assertions < before.assertions) res.errors.push(`${before.path}: Assertions reduziert (${before.assertions} → ${after.assertions})`);
-    }
-    if (scan.total_skips > snap.total_skips) res.errors.push(`Neue skip/todo-Markierungen in Testdateien (${snap.total_skips} → ${scan.total_skips})`);
-  }
-  if (scan.only_files.length) res.errors.push(`.only in Testdateien: ${scan.only_files.join(', ')}`);
-  const missing = acIds.filter((id) => !scan.tags.includes(id));
+  const scanNow = scanTests(feature, cfg);
+  if (snap) checkTestIntegrity(snap, scanNow, res);
+  if (scanNow.only_files.length) res.errors.push(`.only in Testdateien: ${scanNow.only_files.join(', ')}`);
+  const missing = acIds.filter((id) => !scanNow.tags.includes(id));
   if (missing.length) res.errors.push(`Kein Test mehr für: ${missing.join(', ')}`);
 
   const changed = changedFiles(feature.base);
-  const prodChanges = changed.filter((f) => !matchesAny(f, [...cfg.test_globs, ...cfg.test_support_globs]));
+  const prodChanges = changed.filter((f) => !isTestFile(f, cfg));
   if (!prodChanges.length) res.warnings.push('Keine Änderungen außerhalb von Testdateien gefunden');
 
   for (const check of cfg.commands.checks) {
@@ -473,6 +584,14 @@ export function gateReview(feature, cfg) {
     else if (!row.some((c) => /✅|\b(?:erfüllt|ja|pass(?:ed)?)\b/i.test(c)) || row.some((c) => /❌|nicht erfüllt/i.test(c))) {
       res.errors.push(`AC-Matrix: ${id} ist nicht als erfüllt (✅) markiert`);
     }
+  }
+
+  // Workflow-Ausnahmen müssen im Review stehen und bewertet sein (Platzhalter prüft checkPlaceholders).
+  const exceptions = feature.exceptions ?? [];
+  if (exceptions.length) {
+    const text = section(secs, EXCEPTIONS_SECTION);
+    if (text === null) res.errors.push(`Abschnitt "## ${EXCEPTIONS_SECTION}" fehlt (${exceptions.length} Ausnahme(n), siehe \`${WF} diff --summary\`)`);
+    else for (const e of exceptions) if (!text.includes(e.ts)) res.errors.push(`${EXCEPTIONS_SECTION}: Ausnahme vom ${e.ts} (${e.type}) fehlt`);
   }
 
   const findings = tableRows(section(secs, 'Befunde') ?? '');
@@ -534,7 +653,7 @@ export function writeDenial(state, cfg, file, agentType) {
       if (file === artifact(phase)) return null;
       return `In Phase "${phase}" darf nur ${artifact(phase)} geschrieben werden.`;
     case 'tests':
-      if (matchesAny(file, [...cfg.test_globs, ...cfg.test_support_globs])) return null;
+      if (isTestFile(file, cfg)) return null;
       return `In Phase "tests" dürfen nur Testdateien geschrieben werden (${cfg.test_globs.join(', ')}). Produktionscode folgt in Phase "implement".`;
     case 'implement':
       if (file.startsWith('.workflow/')) return 'Ticket, Plan und Review sind in Phase "implement" gesperrt.';
@@ -550,7 +669,7 @@ export function writeDenial(state, cfg, file, agentType) {
 
 /** Shell-Befehle, die den Workflow umgehen würden. */
 export function commandDenial(state, command, agentType) {
-  const wfCall = command.match(/^\s*node\s+["']?(?:\.\/)?\.claude[\\/]workflow[\\/]wf\.mjs["']?\s+(\w+)/);
+  const wfCall = command.match(/^\s*node\s+["']?(?:\.\/)?\.claude[\\/]workflow[\\/]wf\.mjs["']?\s+([\w-]+)/);
   const chained = /[;&|>`]|\$\(/.test(command);
   if (wfCall && !chained) {
     if (ROLES[agentType] && !['status', 'check', 'diff'].includes(wfCall[1])) {
@@ -584,7 +703,7 @@ export function formatReport(feature, res) {
 export const NEXT_STEPS = {
   spec: `Subagent "spec-creator" füllt ticket.md. Offene Fragen mit dem Nutzer klären. Dann \`${WF} advance\`.`,
   plan: `Subagent "tech-planner" schreibt plan.md. Dann \`${WF} check\`.`,
-  tests: `Subagent "test-writer" schreibt fehlschlagende Tests mit Tags. Dann \`${WF} advance\` (prüft Red).`,
+  tests: `Subagent "test-writer" schreibt fehlschlagende Tests mit Tags. Dann \`${WF} advance\` (prüft Red; nach einem Rücksprung mit nur korrigierten Tests ggf. \`${WF} allow-green --reason "..."\`).`,
   implement: `Subagent "code-implementer" implementiert, bis alle Checks grün sind. Dann \`${WF} advance\`.`,
   review: `Subagent "code-reviewer" prüft den Diff und schreibt review.md. Dann \`${WF} advance\`.`,
   done: 'Feature abgeschlossen. Änderungen dem Nutzer zusammenfassen (Commit nur auf Wunsch).',

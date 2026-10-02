@@ -6,6 +6,7 @@ import {
   ROOT, WF_DIR, FEATURES_DIR, PHASES, ARTIFACTS, WF, NEXT_STEPS,
   loadConfig, loadState, saveState, activeFeature, readArtifact, artifactPath, logEvent,
   gateWithApproval, formatReport, sha, isGitRepo, headCommit, changedFiles, diffHash, diffText,
+  prodFingerprint, ticketAcIds, checkAllowGreen, exceptionsSection,
 } from './lib.mjs';
 
 const USAGE = `Feature-Workflow – Befehle:
@@ -14,6 +15,8 @@ const USAGE = `Feature-Workflow – Befehle:
   check                          Gate der aktuellen Phase prüfen (ändert nichts)
   advance                        Gate prüfen und bei Erfolg in die nächste Phase wechseln
   back <phase> --reason "..."    Zurück in eine frühere Phase (spec|plan|tests|implement)
+  allow-green --reason "..."     Red-Ausnahme nach Rücksprung in "tests": nur Testdateien geändert,
+                                 Suite grün, keine neue AC. Begründung erscheint im Review.
   diff [--summary]               Code-Änderungen seit Feature-Start + Diff-Hash (für Review)
   list                           Alle Features
   resume <id>                    Ein nicht abgeschlossenes Feature wieder aktivieren
@@ -41,11 +44,18 @@ function requireActive() {
 
 const nextPhase = (p) => PHASES[PHASES.indexOf(p) + 1];
 
+function printExceptions(f) {
+  const list = f.exceptions ?? [];
+  if (list.length) console.log(`Workflow-Ausnahmen (${list.length}):\n${list.map((e) => `  - ${e.ts}  ${e.type} (${e.phase}): ${e.reason}`).join('\n')}`);
+}
+
 function printStatus(f) {
   console.log(`Feature ${f.id} – ${f.title}`);
   console.log(`Phase:    ${f.phase} (${PHASES.indexOf(f.phase) + 1}/${PHASES.length})  ${PHASES.map((p) => (p === f.phase ? `[${p}]` : p)).join(' → ')}`);
   console.log(`Ordner:   ${f.dir}`);
   console.log(`Versuche: ${f.attempts}/${cfg.max_attempts}${f.escalated ? ' (ESKALIERT – Nutzer muss eingreifen)' : ''}   Review-Runden: ${f.review_rounds}/${cfg.max_review_rounds + f.extra_rounds}`);
+  if (f.red_exception) console.log(`Red-Ausnahme aktiv (${f.red_exception.ts}): ${f.red_exception.reason}`);
+  printExceptions(f);
   console.log(`Nächster Schritt: ${NEXT_STEPS[f.phase]}`);
 }
 
@@ -105,7 +115,16 @@ const commands = {
 
     const from = f.phase;
     if (ARTIFACTS[from] && from !== 'review') f.hashes[from] = sha(readArtifact(f, from));
-    if (from === 'tests') f.test_snapshot = res.data.snapshot;
+    if (from === 'tests') {
+      f.test_snapshot = res.data.snapshot;
+      // Eine genutzte Red-Ausnahme bleibt dauerhaft dokumentiert (Review, diff, status).
+      if (f.red_exception) {
+        const { ts, reason, diff_hash } = f.red_exception;
+        f.exceptions = [...(f.exceptions ?? []), { ts, phase: 'tests', type: 'allow-green', reason, diff_hash }];
+        delete f.red_exception;
+      }
+      delete f.retest_base;
+    }
     const to = nextPhase(from);
     f.phase = to;
     f.attempts = 0;
@@ -116,7 +135,12 @@ const commands = {
       const template = path.join(WF_DIR, 'templates', ARTIFACTS[to]);
       const target = artifactPath(f, to);
       if (!fs.existsSync(target)) {
-        fs.writeFileSync(target, fs.readFileSync(template, 'utf8').replaceAll('__ID__', f.id).replaceAll('__TITLE__', f.title));
+        let text = fs.readFileSync(template, 'utf8').replaceAll('__ID__', f.id).replaceAll('__TITLE__', f.title);
+        if (to === 'review') {
+          const extra = exceptionsSection(f);
+          if (extra) text = text.includes('\n## Fazit') ? text.replace('\n## Fazit', `\n${extra}## Fazit`) : `${text.trimEnd()}\n\n${extra}`;
+        }
+        fs.writeFileSync(target, text);
       }
     }
     if (to === 'done') {
@@ -144,6 +168,14 @@ const commands = {
       const review = artifactPath(f, 'review');
       if (fs.existsSync(review)) fs.renameSync(review, review.replace(/\.md$/, `-runde-${f.review_rounds}.md`));
     }
+    // Stand beim Rücksprung aus implement/review nach tests festhalten: Grundlage für allow-green.
+    const ts = new Date().toISOString();
+    delete f.red_exception;
+    if (target === 'tests' && ['implement', 'review'].includes(f.phase)) {
+      f.retest_base = { ts, from: f.phase, prod: prodFingerprint(f, cfg), acs: ticketAcIds(f), tests: f.test_snapshot };
+    } else {
+      delete f.retest_base;
+    }
     // Alles ab der Zielphase ist ungültig und muss neu durchlaufen werden.
     for (const p of PHASES.slice(ti)) { delete f.hashes[p]; delete f.approvals[p]; }
     if (ti <= PHASES.indexOf('tests')) f.test_snapshot = null;
@@ -152,10 +184,27 @@ const commands = {
     f.phase = target;
     f.attempts = 0;
     f.escalated = false;
-    logEvent(f, 'back', { from, to: target, reason });
+    f.history.push({ ts, phase: target, event: 'back', from, to: target, reason });
     saveState(state);
     console.log(`${from} → ${target} (Grund: ${reason})`);
     console.log(`Nächster Schritt: ${NEXT_STEPS[target]}`);
+  },
+
+  'allow-green'() {
+    const f = requireActive();
+    const reason = option('reason')?.trim();
+    if (!reason || reason.length < cfg.min_reason_length) {
+      fail(`Begründung fehlt oder ist zu kurz: --reason "..." (mindestens ${cfg.min_reason_length} Zeichen; sie erscheint im Review).`);
+    }
+    const res = checkAllowGreen(f, cfg);
+    console.log(formatReport(f, res));
+    if (res.errors.length) process.exit(1);
+
+    f.red_exception = { ts: new Date().toISOString(), reason, diff_hash: res.data.diff_hash, retest_from: res.data.base_ts };
+    logEvent(f, 'allow-green', { reason, diff_hash: res.data.diff_hash });
+    saveState(state);
+    console.log(`\nRed-Ausnahme erteilt für Code-Stand ${res.data.diff_hash}. Sie gilt nur, solange sich der Code nicht ändert.`);
+    console.log(`Nächster Schritt: \`${WF} advance\``);
   },
 
   diff() {
@@ -163,6 +212,7 @@ const commands = {
     const files = changedFiles(f.base);
     console.log(`Diff-Hash: ${diffHash(f.base)}`);
     console.log(`Basis:     ${f.base.slice(0, 12)}`);
+    printExceptions(f);
     console.log(`Geänderte Dateien (${files.length}):\n  ${files.join('\n  ')}\n`);
     if (!args.includes('--summary')) console.log(diffText(f.base));
   },

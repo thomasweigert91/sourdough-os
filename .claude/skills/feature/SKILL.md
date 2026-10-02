@@ -37,6 +37,11 @@ Die Freigabe gibt nur der Nutzer. Schreib nie selbst „freigabe“ und behaupte
 1. Subagent **test-writer** beauftragen. Er schreibt fehlschlagende Tests mit Tags `<ID>/AC-n` und läuft, bis das Gate „Red bestätigt“ meldet.
 2. `wf advance`. Damit werden die Akzeptanztests gesperrt.
 3. Meldet der test-writer, eine AC sei schon erfüllt: dem Nutzer melden und fragen, ob die AC aus dem Ticket raus soll (`wf back spec --reason "..."`).
+4. **Rücksprung mit nur korrigierten Tests:** Kommt die Phase aus `implement` oder `review` zurück und werden nur bestehende Tests korrigiert, ist die Suite danach meist grün und Red nicht mehr möglich. Den test-writer anweisen, das Gate dann nicht zu umgehen (keine künstlich roten Tests), sondern zu stoppen. Dem Nutzer die Lage zeigen und **nur mit seiner Zustimmung** `wf allow-green --reason "..."` ausführen, danach `wf advance`.
+   - Der Befehl prüft selbst: nur Testdateien seit dem Rücksprung geändert, keine neue AC, Tests nicht abgeschwächt, Suite grün. Lehnt er ab, die Fehler dem Nutzer zeigen, nicht umgehen.
+   - Die Begründung (mind. 20 Zeichen) beschreibt konkret, welche Tests warum korrigiert wurden. Sie erscheint in `wf diff`, `wf status` und im Review.
+   - Die Ausnahme gilt nur für den geprüften Code-Stand. Ändert sich danach etwas, verlangt `wf advance` eine neue Prüfung.
+   - Nie für neue Tests oder neue AC: Die brauchen Red.
 
 ## 4. implement – Code
 1. Subagent **code-implementer** beauftragen. Ein Hook lässt ihn erst fertig melden, wenn alle Checks grün sind.
@@ -45,7 +50,7 @@ Die Freigabe gibt nur der Nutzer. Schreib nie selbst „freigabe“ und behaupte
 4. **Eskalation:** Meldet der Workflow, dass die maximale Zahl an Versuchen erreicht ist: **Stopp.** Die letzten Fehler zusammenfassen und den Nutzer um Anweisung bitten.
 
 ## 5. review – Abnahme
-1. Subagent **code-reviewer** beauftragen. Nenne **nur** die Feature-ID und dass er reviewen soll. Keine Zusammenfassung der Implementierung, keine Begründungen: Er soll unvoreingenommen auf den Diff schauen.
+1. Subagent **code-reviewer** beauftragen. Nenne **nur** die Feature-ID und dass er reviewen soll. Keine Zusammenfassung der Implementierung, keine Begründungen: Er soll unvoreingenommen auf den Diff schauen. Workflow-Ausnahmen (z. B. `allow-green`) stehen bereits als Abschnitt „Workflow-Ausnahmen“ in `review.md`; er muss sie bewerten, das Gate prüft es. Nicht zusätzlich erklären.
 2. `wf advance`.
    - **APPROVED**: weiter zu 6.
    - **CHANGES_REQUESTED**: `wf back implement --reason "Review-Runde n"`, dann code-implementer mit dem Auftrag „Befunde aus review-runde-n.md beheben“, danach wieder 4 und 5.
@@ -53,9 +58,9 @@ Die Freigabe gibt nur der Nutzer. Schreib nie selbst „freigabe“ und behaupte
    - **Maximale Review-Runden erreicht**: **Stopp.** Offene Befunde zeigen. Der Nutzer kann mit „weitere runde“ eine zusätzliche Runde erlauben.
 
 ## 6. done – Abschluss
-Kurze Zusammenfassung: Ziel, erfüllte AC, geänderte Dateien, Ergebnis der Checks, Review-Fazit, Pfad zum Feature-Ordner. **Nicht committen**, außer der Nutzer will es.
+Kurze Zusammenfassung: Ziel, erfüllte AC, geänderte Dateien, Ergebnis der Checks, Review-Fazit, Workflow-Ausnahmen (falls vorhanden), Pfad zum Feature-Ordner. **Nicht committen**, außer der Nutzer will es.
 
 ## Grundregeln
 - Keine Workflow-Dateien ändern (`.claude/workflow`, `.claude/agents`, `.claude/settings*.json`, `.workflow/state.json`).
-- Ein blockierter Schreibzugriff ist eine Regel, kein Fehler. Den vorgesehenen Weg nehmen (`wf back …`) und nicht über die Shell ausweichen.
+- Ein blockierter Schreibzugriff ist eine Regel, kein Fehler. Den vorgesehenen Weg nehmen (`wf back …`, nach Rücksprung mit Zustimmung des Nutzers `wf allow-green …`) und nicht über die Shell ausweichen.
 - Nach einer Unterbrechung oder Kontext-Kompaktierung: `wf status` zeigt, wo es weitergeht.
