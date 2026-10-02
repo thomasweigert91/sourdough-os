@@ -247,3 +247,11 @@ describe("F005 Dashboard: lokaler Speicher beim Abmelden", () => {
     expect(screen.getByRole("button", { name: "Abmelden" })).toBeEnabled();
   });
 });
+
+describe("F010 Dashboard: Einstieg zum Rechner", () => {
+  it("F010/AC-1 zeigt einen Link „Zum Rechner“ auf /calculator", () => {
+    render(<Dashboard />);
+
+    expect(screen.getByRole("link", { name: "Zum Rechner" })).toHaveAttribute("href", "/calculator");
+  });
+});

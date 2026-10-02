@@ -1,10 +1,12 @@
 "use client";
 
 import { QueryClientContext } from "@tanstack/react-query";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useContext, useState, type ReactNode } from "react";
 import { signOut, useSession } from "@/lib/auth-client";
 import { GENERIC_ERROR_MESSAGE } from "@/lib/auth-form";
+import { CALCULATOR_LINK_LABEL } from "@/lib/calculator/messages";
 import { OFFLINE_SIGN_OUT_MESSAGE } from "@/lib/offline-messages";
 import { clearOfflineData } from "@/lib/query/clear-offline-data";
 import { useOnlineStatus } from "@/lib/query/online";
@@ -60,6 +62,11 @@ export function Dashboard({ children }: DashboardProps) {
           <p className="break-all text-zinc-600 dark:text-zinc-400">{data.user.email}</p>
         </>
       ) : null}
+      <p className="text-sm text-zinc-600 dark:text-zinc-400">
+        <Link href="/calculator" className="underline underline-offset-4">
+          {CALCULATOR_LINK_LABEL}
+        </Link>
+      </p>
       {children}
       {error ? (
         <p role="alert" className="text-sm font-medium text-red-700 dark:text-red-400">

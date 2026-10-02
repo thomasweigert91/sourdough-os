@@ -1,5 +1,6 @@
 // Leert nach dem Abmelden alle lokal gespeicherten Nutzerdaten (F005, AC-7).
 import type { QueryClient } from "@tanstack/react-query";
+import { clearAccountCalculatorDraft } from "@/lib/calculator/local-draft";
 import { QUERY_CACHE_KEY } from "./keys";
 import { resetSyncUser } from "./sync-user";
 
@@ -22,4 +23,6 @@ export function clearOfflineData(client: QueryClient | undefined): void {
   } catch {
     // Speicher nicht verfügbar: es gibt nichts zu leeren.
   }
+  // Lokal gemerkter Rechner-Stand (F010): nur ein Konto-Stand wird gelöscht, ein Gast-Stand bleibt.
+  clearAccountCalculatorDraft();
 }
