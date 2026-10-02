@@ -44,3 +44,4 @@ next-env.d.ts
 # Claude Feature-Workflow (lokaler Zustand; Tickets/Pläne/Reviews werden versioniert)
 .workflow/state.json
 .workflow/state.json.tmp
+.tmp-*
