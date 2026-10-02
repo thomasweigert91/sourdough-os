@@ -1,0 +1,47 @@
+{
+  "human_approval": ["plan"],
+  "min_acceptance_criteria": 2,
+  "max_attempts": 5,
+  "max_review_rounds": 3,
+  "stop_gate_phases": ["implement"],
+  "require_reviewer_subagent": true,
+  "block_severities": ["BLOCKER", "MAJOR"],
+  "strict_wording": false,
+  "output_tail_lines": 40,
+  "command_timeout_sec": 600,
+  "commands": {
+    "test": "npx vitest run",
+    "checks": [
+      {
+        "name": "typecheck",
+        "run": "npx tsc --noEmit"
+      },
+      {
+        "name": "lint",
+        "run": "npm run lint"
+      },
+      {
+        "name": "test",
+        "run": "npx vitest run"
+      },
+      {
+        "name": "build",
+        "run": "npm run build",
+        "enabled": true
+      },
+      {
+        "name": "audit",
+        "run": "npm audit --audit-level=high",
+        "when_changed": ["package.json", "package-lock.json", "pnpm-lock.yaml"]
+      }
+    ]
+  },
+  "on_edit": [
+    {
+      "name": "eslint",
+      "glob": "**/*.{js,jsx,ts,tsx,mjs,cjs}",
+      "run": "npx eslint {file}",
+      "block": true
+    }
+  ]
+}
