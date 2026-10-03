@@ -2,7 +2,17 @@
 
 import type { Ref } from "react";
 import {
+  FLOUR_TYPES,
+  OTHER_FLOUR_TYPE_ID,
+  isFlourTypeId,
+  type FlourGroup,
+  type FlourType,
+  type FlourTypeId,
+} from "@/lib/baking-engine/flour-types";
+import {
   ADDITIVE_TYPE_LABELS,
+  FLOUR_GROUP_LABELS,
+  FLOUR_TYPE_LABEL,
   GRAMS_LABEL,
   NAME_LABEL,
   PERCENT_LABEL,
@@ -31,11 +41,28 @@ export interface IngredientRowProps {
   onStarterHydrationChange: (value: number) => void;
   onNameChange: (name: string) => void;
   onTypeChange: (type: AdditiveType) => void;
+  onFlourTypeChange: (flourType: FlourTypeId) => void;
   onRemove: () => void;
-  nameInputRef?: Ref<HTMLInputElement>;
+  /** Auswahl „Mehltyp“ (nur Mehlzeilen), damit „Mehl hinzufügen“ den Fokus setzen kann. */
+  flourTypeSelectRef?: Ref<HTMLSelectElement>;
 }
 
 const ADDITIVE_TYPES = ["salt", "other"] as const satisfies readonly AdditiveType[];
+/** Reihenfolge der Gruppen in der Auswahl „Mehltyp“; „other“ folgt danach ohne Gruppe. */
+const FLOUR_GROUP_ORDER = ["wheat", "spelt", "rye", "special"] as const satisfies readonly Exclude<
+  FlourGroup,
+  "other"
+>[];
+const FLOUR_TYPE_GROUPS = FLOUR_GROUP_ORDER.map((group) => ({
+  group,
+  label: FLOUR_GROUP_LABELS[group],
+  flours: FLOUR_TYPES.filter((flour) => flour.group === group),
+}));
+const UNGROUPED_FLOUR_TYPES = FLOUR_TYPES.filter((flour) => flour.group === "other");
+
+function FlourTypeOption({ flour }: { flour: FlourType }) {
+  return <option value={flour.id}>{flour.name}</option>;
+}
 /** Obergrenze der Server Action saveRecipe für Namen. */
 const INGREDIENT_NAME_MAX_LENGTH = 200;
 
@@ -67,14 +94,18 @@ export function IngredientRow({
   onStarterHydrationChange,
   onNameChange,
   onTypeChange,
+  onFlourTypeChange,
   onRemove,
-  nameInputRef,
+  flourTypeSelectRef,
 }: IngredientRowProps) {
   const displayName = ingredientDisplayName(row);
   const errorId = `${row.id}-error`;
   const invalidField = error ? errorField(row) : null;
-  const hasName = row.type === "flour" || row.type === "salt" || row.type === "other";
+  const isFlour = row.type === "flour";
   const isAdditive = row.type === "salt" || row.type === "other";
+  const canBeRemoved = isFlour || isAdditive;
+  // Freier Name: Salz/Sonstiges wie F010, bei Mehlen nur „Sonstiges Mehl“ (AC-10).
+  const hasName = isAdditive || (isFlour && (row.flourType === OTHER_FLOUR_TYPE_ID || row.flourType === null));
 
   function describedBy(field: RowField, extra?: string): string[] {
     const ids: string[] = [];
@@ -90,13 +121,39 @@ export function IngredientRow({
       className="flex flex-col gap-3 rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950"
     >
       <div className="flex flex-wrap items-end gap-3">
+        {isFlour ? (
+          <div className="flex min-w-0 flex-1 basis-40 flex-col gap-1">
+            <label htmlFor={`${row.id}-flour-type`} className={LABEL_CLASS_NAME}>
+              {FLOUR_TYPE_LABEL}
+            </label>
+            <select
+              ref={flourTypeSelectRef}
+              id={`${row.id}-flour-type`}
+              value={row.flourType ?? OTHER_FLOUR_TYPE_ID}
+              onChange={(event) => {
+                if (isFlourTypeId(event.target.value)) onFlourTypeChange(event.target.value);
+              }}
+              className={`${INPUT_CLASS_NAME} ${INPUT_BORDER_CLASS_NAME}`}
+            >
+              {FLOUR_TYPE_GROUPS.map(({ group, label, flours }) => (
+                <optgroup key={group} label={label}>
+                  {flours.map((flour) => (
+                    <FlourTypeOption key={flour.id} flour={flour} />
+                  ))}
+                </optgroup>
+              ))}
+              {UNGROUPED_FLOUR_TYPES.map((flour) => (
+                <FlourTypeOption key={flour.id} flour={flour} />
+              ))}
+            </select>
+          </div>
+        ) : null}
         {hasName ? (
           <div className="flex min-w-0 flex-1 basis-40 flex-col gap-1">
             <label htmlFor={`${row.id}-name`} className={LABEL_CLASS_NAME}>
               {NAME_LABEL}
             </label>
             <input
-              ref={nameInputRef}
               id={`${row.id}-name`}
               type="text"
               autoComplete="off"
@@ -106,7 +163,7 @@ export function IngredientRow({
               className={`${INPUT_CLASS_NAME} ${INPUT_BORDER_CLASS_NAME}`}
             />
           </div>
-        ) : (
+        ) : isFlour ? null : (
           <p className="min-w-0 flex-1 basis-40 font-medium text-zinc-950 dark:text-zinc-50">
             {displayName}
           </p>
@@ -132,7 +189,7 @@ export function IngredientRow({
             </select>
           </div>
         ) : null}
-        {hasName ? (
+        {canBeRemoved ? (
           <button
             type="button"
             onClick={onRemove}

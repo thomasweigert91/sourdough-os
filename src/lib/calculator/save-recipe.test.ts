@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  addAdditiveRow,
   addFlourRow,
   createReferenceRecipe,
   removeRow,
@@ -18,8 +19,8 @@ const REFERENCE_INPUT = {
   targetDoughWeight: 1920,
   targetHydration: 72.7,
   ingredients: [
-    { name: "Weizenmehl", type: "flour", amountGrams: 800, bakersPercent: 80, starterHydration: 100 },
-    { name: "Roggenmehl", type: "flour", amountGrams: 200, bakersPercent: 20, starterHydration: 100 },
+    { name: "Weizen 550", type: "flour", amountGrams: 800, bakersPercent: 80, starterHydration: 100 },
+    { name: "Roggen 1150", type: "flour", amountGrams: 200, bakersPercent: 20, starterHydration: 100 },
     { name: "Wasser", type: "water", amountGrams: 700, bakersPercent: 70, starterHydration: 100 },
     { name: "Starter", type: "starter", amountGrams: 200, bakersPercent: 20, starterHydration: 100 },
     { name: "Salz", type: "salt", amountGrams: 20, bakersPercent: 2, starterHydration: 100 },
@@ -35,26 +36,34 @@ describe("F010 Speichern: Payload", () => {
     expect(buildSaveRecipeInput(createReferenceRecipe(), "  Landbrot ")).toEqual(REFERENCE_INPUT);
   });
 
-  it("F010/AC-8 ersetzt leere Zutatennamen durch den Typnamen", () => {
-    const { state } = addFlourRow(createReferenceRecipe());
+  it("F010/AC-8 benennt neue Zeilen: Mehl nach dem Mehltyp, leere Zutatennamen nach dem Typnamen", () => {
+    const { state } = addAdditiveRow(addFlourRow(createReferenceRecipe()).state);
 
     const input = buildSaveRecipeInput(state, "Landbrot");
 
-    expect(input.ingredients).toHaveLength(6);
+    expect(input.ingredients).toHaveLength(7);
     expect(input.ingredients[2]).toEqual({
-      name: "Mehl",
+      name: "Weizen 550",
       type: "flour",
       amountGrams: 0,
       bakersPercent: 0,
       starterHydration: 100,
     });
+    expect(input.ingredients[6]).toEqual({
+      name: "Sonstiges",
+      type: "other",
+      amountGrams: 0,
+      bakersPercent: 0,
+      starterHydration: 100,
+    });
     expect(input.ingredients.map((i) => i.name)).toEqual([
-      "Weizenmehl",
-      "Roggenmehl",
-      "Mehl",
+      "Weizen 550",
+      "Roggen 1150",
+      "Weizen 550",
       "Wasser",
       "Starter",
       "Salz",
+      "Sonstiges",
     ]);
   });
 

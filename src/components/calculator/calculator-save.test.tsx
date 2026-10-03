@@ -16,6 +16,7 @@ import {
   expectPercents,
   gramsField,
   ingredientGroup,
+  ingredientItems,
   metricText,
   percentField,
   setSlider,
@@ -44,8 +45,8 @@ const REFERENCE_PAYLOAD = {
   targetDoughWeight: 1920,
   targetHydration: 72.7,
   ingredients: [
-    { name: "Weizenmehl", type: "flour", amountGrams: 800, bakersPercent: 80, starterHydration: 100 },
-    { name: "Roggenmehl", type: "flour", amountGrams: 200, bakersPercent: 20, starterHydration: 100 },
+    { name: "Weizen 550", type: "flour", amountGrams: 800, bakersPercent: 80, starterHydration: 100 },
+    { name: "Roggen 1150", type: "flour", amountGrams: 200, bakersPercent: 20, starterHydration: 100 },
     { name: "Wasser", type: "water", amountGrams: 700, bakersPercent: 70, starterHydration: 100 },
     { name: "Starter", type: "starter", amountGrams: 200, bakersPercent: 20, starterHydration: 100 },
     { name: "Salz", type: "salt", amountGrams: 20, bakersPercent: 2, starterHydration: 100 },
@@ -281,10 +282,11 @@ describe("F010 Lokal merken (Gast oder offline)", () => {
     // Basis Ziel-Teiggewicht 960
     await user.click(screen.getByRole("radio", { name: "Basis: Ziel-Teiggewicht" }));
     await replaceValue(user, textbox("Ziel-Teiggewicht (g)"), "960");
-    // Mehl „Dinkel“ hinzufügen, Mehlanteile 60 / 20 / 20
+    // Mehl „Dinkel“ hinzufügen (freier Name über „Sonstiges Mehl“, F011), Mehlanteile 60 / 20 / 20
     await user.click(screen.getByRole("button", { name: "Mehl hinzufügen" }));
-    await user.keyboard("Dinkel");
-    await replaceValue(user, percentField("Weizenmehl"), "60");
+    await user.selectOptions(within(ingredientItems()[2]).getByRole("combobox", { name: "Mehltyp" }), "Sonstiges Mehl");
+    await user.type(within(ingredientGroup("Sonstiges Mehl")).getByRole("textbox", { name: "Name" }), "Dinkel");
+    await replaceValue(user, percentField("Weizen 550"), "60");
     await replaceValue(user, percentField("Dinkel"), "20");
     // Starter-Hydratation 80, Salz als „Sonstiges“
     await replaceValue(user, starterHydrationField(), "80");
@@ -311,11 +313,14 @@ describe("F010 Lokal merken (Gast oder offline)", () => {
 
     expect(screen.getByRole("radio", { name: "Basis: Ziel-Teiggewicht" })).toBeChecked();
     expect(textbox("Ziel-Teiggewicht (g)")).toHaveValue("960");
-    const names = ["Weizenmehl", "Roggenmehl", "Dinkel", "Wasser", "Starter", "Salz"];
+    const names = ["Weizen 550", "Roggen 1150", "Dinkel", "Wasser", "Starter", "Salz"];
     expectIngredientOrder(names);
     expectGrams(names, ["300", "100", "100", "350", "100", "10"]);
     expectPercents(names, ["60,0", "20,0", "20,0", "70,0", "20,0", "2,0"]);
     expect(within(ingredientGroup("Dinkel")).getByRole("textbox", { name: "Name" })).toHaveValue("Dinkel");
+    expect(within(ingredientGroup("Dinkel")).getByRole("combobox", { name: "Mehltyp" })).toHaveDisplayValue(
+      "Sonstiges Mehl",
+    );
     expect(within(ingredientGroup("Salz")).getByRole("combobox", { name: "Typ" })).toHaveDisplayValue("Sonstiges");
     expect(starterHydrationField()).toHaveValue("80,0");
     expect(textbox("Ziel-Teigtemperatur (DDT)")).toHaveValue("26,0");

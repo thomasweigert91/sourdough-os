@@ -27,7 +27,7 @@ import {
   type RecipeState,
 } from "@/lib/calculator/recipe-state";
 
-// Referenzrezept (Ticket F010): Weizenmehl 80 %, Roggenmehl 20 %, Wasser 70 %, Starter 20 % (100 %), Salz 2 %.
+// Referenzrezept (Ticket F010, Namen ab F011): Weizen 550 80 %, Roggen 1150 20 %, Wasser 70 %, Starter 20 % (100 %), Salz 2 %.
 const WEIZEN = "row-1";
 const ROGGEN = "row-2";
 const WASSER = "row-3";
@@ -57,7 +57,7 @@ describe("F010 Rezeptzustand: Referenzrezept und Live-Kennzahlen", () => {
     expect(state.flourBasis).toBe(1000);
     expect(state.doughWeight).toBe(1920);
     expect(state.rows.map((r) => r.id)).toEqual([WEIZEN, ROGGEN, WASSER, STARTER, SALZ]);
-    expect(names(state)).toEqual(["Weizenmehl", "Roggenmehl", "Wasser", "Starter", "Salz"]);
+    expect(names(state)).toEqual(["Weizen 550", "Roggen 1150", "Wasser", "Starter", "Salz"]);
     expect(state.rows.map((r) => r.type)).toEqual(["flour", "flour", "water", "starter", "salt"]);
     expectAllClose(percents(state), [80, 20, 70, 20, 2]);
     expectAllClose(grams(state), [800, 200, 700, 200, 20]);
@@ -195,18 +195,19 @@ describe("F010 Rezeptzustand: Basis Ziel-Teiggewicht", () => {
 });
 
 describe("F010 Rezeptzustand: Zeilen hinzufügen und entfernen", () => {
-  it("F010/AC-4 „Mehl hinzufügen“ fügt eine leere Mehl-Zeile direkt nach dem letzten Mehl ein", () => {
+  it("F010/AC-4 „Mehl hinzufügen“ fügt eine neue Mehl-Zeile (Weizen 550, 0 g) direkt nach dem letzten Mehl ein", () => {
     const { state, rowId } = addFlourRow(createReferenceRecipe());
 
     expect(rowId).toBe("row-6");
     expect(state.rows.map((r) => r.id)).toEqual([WEIZEN, ROGGEN, "row-6", WASSER, STARTER, SALZ]);
     expect(state.rows[2]).toEqual({
       id: "row-6",
-      name: "",
+      name: "Weizen 550",
       type: "flour",
       grams: 0,
       percent: 0,
       starterHydration: 100,
+      flourType: "wheat_550",
     });
   });
 
@@ -222,6 +223,7 @@ describe("F010 Rezeptzustand: Zeilen hinzufügen und entfernen", () => {
       grams: 0,
       percent: 0,
       starterHydration: 100,
+      flourType: null,
     });
 
     const renamed = setRowName(setRowType(state, rowId, "salt"), rowId, "Meersalz");
@@ -229,10 +231,10 @@ describe("F010 Rezeptzustand: Zeilen hinzufügen und entfernen", () => {
     expect(row(renamed, rowId).name).toBe("Meersalz");
   });
 
-  it("F010/AC-4 Roggenmehl entfernen behält die Reihenfolge und meldet die Mehlanteile", () => {
+  it("F010/AC-4 Roggen 1150 entfernen behält die Reihenfolge und meldet die Mehlanteile", () => {
     const changed = removeRow(createReferenceRecipe(), ROGGEN);
 
-    expect(names(changed)).toEqual(["Weizenmehl", "Wasser", "Starter", "Salz"]);
+    expect(names(changed)).toEqual(["Weizen 550", "Wasser", "Starter", "Salz"]);
     expectAllClose(grams(changed), [800, 700, 200, 20]);
     expectAllClose(percents(changed), [80, 70, 20, 2]);
     expect(changed.doughWeight).toBeCloseTo(1720, 6);
@@ -271,7 +273,15 @@ describe("F010 Rezeptzustand: Zeilen hinzufügen und entfernen", () => {
   });
 
   it("F010/AC-4 Anzeigename fällt bei leerem Namen auf den Typnamen zurück", () => {
-    const base: RecipeRow = { id: "x", name: "", type: "flour", grams: 0, percent: 0, starterHydration: 100 };
+    const base: RecipeRow = {
+      id: "x",
+      name: "",
+      type: "flour",
+      grams: 0,
+      percent: 0,
+      starterHydration: 100,
+      flourType: null,
+    };
 
     expect(ingredientDisplayName(base)).toBe("Mehl");
     expect(ingredientDisplayName({ ...base, name: "   ", type: "other" })).toBe("Sonstiges");
@@ -282,7 +292,7 @@ describe("F010 Rezeptzustand: Zeilen hinzufügen und entfernen", () => {
 });
 
 describe("F010 Rezeptzustand: Validierung", () => {
-  it("F010/AC-5 Weizenmehl 70 % meldet die Mehlanteile, Gesamtmehl bleibt 1000", () => {
+  it("F010/AC-5 Weizen 550 70 % meldet die Mehlanteile, Gesamtmehl bleibt 1000", () => {
     const changed = setRowPercent(createReferenceRecipe(), WEIZEN, 70);
 
     expect(changed.flourBasis).toBe(1000);

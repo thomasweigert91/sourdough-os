@@ -1,7 +1,8 @@
-// Neue UI-Texte des Rechners (F010). Meldungen der Rechen-Engine (F007–F009) werden nicht
+// Neue UI-Texte des Rechners (F010, F011). Meldungen der Rechen-Engine (F007–F009) werden nicht
 // dupliziert, sondern aus `@/lib/baking-engine/*` importiert.
 import type { IngredientType } from "@/db/schema/recipes";
 import type { DdtStatus, KneadingMethod } from "@/lib/baking-engine/ddt";
+import type { FlourGroup } from "@/lib/baking-engine/flour-types";
 
 export const CALCULATOR_TITLE = "Rechner";
 export const HYDRATION_SECTION_TITLE = "Hydratations-Rechner";
@@ -25,6 +26,15 @@ export const DEFAULT_INGREDIENT_NAMES = {
   salt: "Salz",
   other: "Sonstiges",
 } as const satisfies Record<IngredientType, string>;
+export const FLOUR_TYPE_LABEL = "Mehltyp";
+export const FLOUR_GROUP_LABELS = {
+  wheat: "Weizen",
+  spelt: "Dinkel",
+  rye: "Roggen",
+  special: "Sonderfälle",
+} as const satisfies Record<Exclude<FlourGroup, "other">, string>;
+export const ADJUST_WATER_ON_FLOUR_SWAP_LABEL =
+  "Wassermenge bei Mehlwechsel automatisch an Konsistenz anpassen (Empfehlung)";
 export const GRAMS_LABEL = "Gramm (g)";
 export const PERCENT_LABEL = "Prozent (%)";
 export const STARTER_HYDRATION_LABEL = "Starter-Hydratation (%)";

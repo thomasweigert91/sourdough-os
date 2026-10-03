@@ -1,13 +1,34 @@
-// Test-Helfer für die Rechner-Komponententests (F010). Nur für Tests gedacht.
+// Test-Helfer für die Rechner-Komponententests (F010, F011). Nur für Tests gedacht.
 // Zugriff ausschließlich über Rollen und zugängliche Namen.
 import { expect } from "vitest";
 import { fireEvent, screen, within } from "@testing-library/react";
 
-export const REFERENCE_NAMES = ["Weizenmehl", "Roggenmehl", "Wasser", "Starter", "Salz"];
+export const REFERENCE_NAMES = ["Weizen 550", "Roggen 1150", "Wasser", "Starter", "Salz"];
+
+export const ADJUST_WATER_SWITCH_LABEL =
+  "Wassermenge bei Mehlwechsel automatisch an Konsistenz anpassen (Empfehlung)";
+
+/**
+ * Zeilengruppe (role="group", Name = Zutatenname) innerhalb von `container`.
+ * <optgroup>-Elemente einer Auswahl (z. B. „Dinkel“ in der Mehltyp-Auswahl) haben
+ * implizit ebenfalls role="group" und werden deshalb ausgeschlossen.
+ * Wirft wie getByRole, wenn nicht genau eine Zeilengruppe passt.
+ */
+function rowGroup(container: HTMLElement, name: string): HTMLElement {
+  const groups = within(container)
+    .queryAllByRole("group", { name })
+    .filter((element) => element.closest("select") === null);
+  if (groups.length !== 1) {
+    throw new Error(
+      `Erwartet genau eine Zeilengruppe (role="group") mit Namen "${name}", gefunden: ${groups.length}`,
+    );
+  }
+  return groups[0];
+}
 
 /** Zeile der Zutatenliste (role="group", Name = Zutatenname). */
 export function ingredientGroup(name: string): HTMLElement {
-  return within(screen.getByRole("list", { name: "Zutaten" })).getByRole("group", { name });
+  return rowGroup(screen.getByRole("list", { name: "Zutaten" }), name);
 }
 
 export function gramsField(name: string): HTMLInputElement {
@@ -16,6 +37,16 @@ export function gramsField(name: string): HTMLInputElement {
 
 export function percentField(name: string): HTMLInputElement {
   return within(ingredientGroup(name)).getByRole("textbox", { name: "Prozent (%)" }) as HTMLInputElement;
+}
+
+/** Auswahl „Mehltyp“ der Mehlzeile mit diesem Namen (F011). */
+export function flourTypeSelect(name: string): HTMLSelectElement {
+  return within(ingredientGroup(name)).getByRole("combobox", { name: "Mehltyp" }) as HTMLSelectElement;
+}
+
+/** Schalter für die automatische Wasseranpassung bei Mehlwechsel (F011). */
+export function adjustWaterSwitch(): HTMLInputElement {
+  return screen.getByRole("switch", { name: ADJUST_WATER_SWITCH_LABEL }) as HTMLInputElement;
 }
 
 export function starterHydrationField(): HTMLInputElement {
@@ -51,7 +82,7 @@ export function expectIngredientOrder(names: string[]): void {
   const items = ingredientItems();
   expect(items).toHaveLength(names.length);
   names.forEach((name, index) => {
-    expect(within(items[index]).getByRole("group", { name })).toBeInTheDocument();
+    expect(rowGroup(items[index], name)).toBeInTheDocument();
   });
 }
 

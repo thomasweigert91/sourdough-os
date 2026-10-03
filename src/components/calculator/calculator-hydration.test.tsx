@@ -133,7 +133,7 @@ describe("F010 Hydratations-Rechner: Gramm und Prozent", () => {
     expect(percentField("Wasser")).toHaveValue("75,0");
     expectMetrics("77,3 %", "177,3");
     expect(textbox("Gesamtmehl (g)")).toHaveValue("1000");
-    expectGrams(["Weizenmehl", "Roggenmehl", "Starter", "Salz"], ["800", "200", "200", "20"]);
+    expectGrams(["Weizen 550", "Roggen 1150", "Starter", "Salz"], ["800", "200", "200", "20"]);
   });
 
   it("F010/AC-2 Salz-Prozent „2,5“ ergibt 25 g, das Feld behält beim Tippen den Rohtext", async () => {
@@ -173,11 +173,11 @@ describe("F010 Hydratations-Rechner: Gramm und Prozent", () => {
     const user = userEvent.setup();
     render(<Calculator owner={GUEST} />);
 
-    await replaceValue(user, gramsField("Weizenmehl"), "900");
+    await replaceValue(user, gramsField("Weizen 550"), "900");
     await user.tab();
 
     expect(textbox("Gesamtmehl (g)")).toHaveValue("1100");
-    expect(percentField("Weizenmehl")).toHaveValue("81,8");
+    expect(percentField("Weizen 550")).toHaveValue("81,8");
     expect(gramsField("Wasser")).toHaveValue("700");
     expect(percentField("Wasser")).toHaveValue("63,6");
   });
@@ -233,7 +233,7 @@ describe("F010 Hydratations-Rechner: Basis Ziel-Teiggewicht", () => {
 });
 
 describe("F010 Hydratations-Rechner: Zeilen hinzufügen und entfernen", () => {
-  it("F010/AC-4 „Mehl hinzufügen“ fügt nach den Mehlen eine leere Zeile ein und fokussiert deren Namensfeld", async () => {
+  it("F010/AC-4 „Mehl hinzufügen“ fügt nach den Mehlen eine Zeile „Weizen 550“ ein und fokussiert deren Auswahl „Mehltyp“", async () => {
     const user = userEvent.setup();
     render(<Calculator owner={GUEST} />);
 
@@ -241,15 +241,22 @@ describe("F010 Hydratations-Rechner: Zeilen hinzufügen und entfernen", () => {
 
     const items = ingredientItems();
     expect(items).toHaveLength(6);
-    const newRow = within(items[2]).getByRole("group", { name: "Mehl" });
-    const nameField = within(newRow).getByRole("textbox", { name: "Name" });
-    expect(nameField).toHaveValue("");
-    expect(nameField).toHaveFocus();
+    const newRow = within(items[2]).getByRole("group", { name: "Weizen 550" });
+    const flourTypeField = within(newRow).getByRole("combobox", { name: "Mehltyp" });
+    expect(flourTypeField).toHaveDisplayValue("Weizen 550");
+    expect(flourTypeField).toHaveFocus();
     expect(within(newRow).getByRole("textbox", { name: "Gramm (g)" })).toHaveValue("0");
     expect(within(newRow).getByRole("textbox", { name: "Prozent (%)" })).toHaveValue("0,0");
-    expectIngredientOrder(["Weizenmehl", "Roggenmehl", "Mehl", "Wasser", "Starter", "Salz"]);
+    expectIngredientOrder(["Weizen 550", "Roggen 1150", "Weizen 550", "Wasser", "Starter", "Salz"]);
 
-    await user.keyboard("Dinkel");
+    // Freier Name nur über „Sonstiges Mehl“ (F011).
+    await user.selectOptions(flourTypeField, "Sonstiges Mehl");
+    const nameField = within(within(ingredientItems()[2]).getByRole("group", { name: "Sonstiges Mehl" })).getByRole(
+      "textbox",
+      { name: "Name" },
+    );
+    expect(nameField).toHaveValue("");
+    await user.type(nameField, "Dinkel");
     expect(ingredientGroup("Dinkel")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Dinkel entfernen" })).toBeEnabled();
   });
@@ -275,19 +282,19 @@ describe("F010 Hydratations-Rechner: Zeilen hinzufügen und entfernen", () => {
     expectIngredientOrder([...REFERENCE_NAMES, "Sonstiges"]);
   });
 
-  it("F010/AC-4 „Roggenmehl entfernen“ entfernt die Zeile, zeigt die Mehlanteil-Meldung und sperrt das letzte Mehl", async () => {
+  it("F010/AC-4 „Roggen 1150 entfernen“ entfernt die Zeile, zeigt die Mehlanteil-Meldung und sperrt das letzte Mehl", async () => {
     const user = userEvent.setup();
     render(<Calculator owner={GUEST} />);
     expect(screen.queryByText(FLOUR_SUM_MESSAGE)).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Roggenmehl entfernen" }));
+    await user.click(screen.getByRole("button", { name: "Roggen 1150 entfernen" }));
 
-    expect(screen.queryByRole("group", { name: "Roggenmehl" })).not.toBeInTheDocument();
-    expectIngredientOrder(["Weizenmehl", "Wasser", "Starter", "Salz"]);
-    expectGrams(["Weizenmehl", "Wasser", "Starter", "Salz"], ["800", "700", "200", "20"]);
+    expect(screen.queryByRole("group", { name: "Roggen 1150" })).not.toBeInTheDocument();
+    expectIngredientOrder(["Weizen 550", "Wasser", "Starter", "Salz"]);
+    expectGrams(["Weizen 550", "Wasser", "Starter", "Salz"], ["800", "700", "200", "20"]);
     expect(screen.getByText(FLOUR_SUM_MESSAGE)).toBeVisible();
     expectNoMetrics();
-    expect(screen.getByRole("button", { name: "Weizenmehl entfernen" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Weizen 550 entfernen" })).toBeDisabled();
   });
 
   it("F010/AC-4 Wasser und Starter haben keinen Entfernen-Button, die anderen tragen den Zutatennamen", () => {
@@ -295,18 +302,18 @@ describe("F010 Hydratations-Rechner: Zeilen hinzufügen und entfernen", () => {
 
     expect(screen.queryByRole("button", { name: "Wasser entfernen" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Starter entfernen" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Weizenmehl entfernen" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Roggenmehl entfernen" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Weizen 550 entfernen" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Roggen 1150 entfernen" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Salz entfernen" })).toBeEnabled();
   });
 });
 
 describe("F010 Hydratations-Rechner: Live-Validierung", () => {
-  it("F010/AC-5 Weizenmehl 70 % zeigt die Mehlanteil-Meldung unter der Liste, bis die Eingabe korrigiert ist", async () => {
+  it("F010/AC-5 Weizen 550 70 % zeigt die Mehlanteil-Meldung unter der Liste, bis die Eingabe korrigiert ist", async () => {
     const user = userEvent.setup();
     render(<Calculator owner={GUEST} />);
     const regionsBefore = politeRegions();
-    const weizenPercent = percentField("Weizenmehl");
+    const weizenPercent = percentField("Weizen 550");
 
     await replaceValue(user, weizenPercent, "70");
 
@@ -401,12 +408,12 @@ describe("F010 Hydratations-Rechner: Live-Validierung", () => {
     await user.type(screen.getByRole("textbox", { name: "Rezeptname" }), "Landbrot");
     expect(screen.getByRole("button", { name: "Als Rezept speichern" })).toBeEnabled();
 
-    await replaceValue(user, percentField("Weizenmehl"), "70");
+    await replaceValue(user, percentField("Weizen 550"), "70");
 
     expect(screen.getByText(FLOUR_SUM_MESSAGE)).toBeVisible();
     expect(screen.getByRole("button", { name: "Als Rezept speichern" })).toBeDisabled();
 
-    await replaceValue(user, percentField("Weizenmehl"), "80");
+    await replaceValue(user, percentField("Weizen 550"), "80");
 
     expect(screen.getByRole("button", { name: "Als Rezept speichern" })).toBeEnabled();
     expect(mocks.saveRecipe).not.toHaveBeenCalled();

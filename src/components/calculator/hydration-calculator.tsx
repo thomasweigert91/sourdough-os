@@ -6,6 +6,7 @@ import { formatDecimal } from "@/lib/calculator/format";
 import {
   ADD_FLOUR_LABEL,
   ADD_INGREDIENT_LABEL,
+  ADJUST_WATER_ON_FLOUR_SWAP_LABEL,
   BASIS_DOUGH_LABEL,
   BASIS_FLOUR_LABEL,
   BASIS_LEGEND,
@@ -22,8 +23,10 @@ import {
   addFlourRow,
   canRemoveRow,
   removeRow,
+  setAdjustWaterOnFlourSwap,
   setBasisMode,
   setBasisValue,
+  setRowFlourType,
   setRowGrams,
   setRowName,
   setRowPercent,
@@ -67,13 +70,13 @@ function Metric({ id, label, value }: { id: string; label: string; value: string
 }
 
 export function HydrationCalculator({ state, evaluation, onChange }: HydrationCalculatorProps) {
-  // Namensfelder je Zeile, damit „Mehl hinzufügen“ den Fokus auf die neue Zeile setzen kann.
-  const nameRefs = useRef(new Map<string, HTMLInputElement>());
+  // Auswahl „Mehltyp“ je Mehlzeile, damit „Mehl hinzufügen“ den Fokus auf die neue Zeile setzen kann.
+  const flourTypeRefs = useRef(new Map<string, HTMLSelectElement>());
 
   function handleAddFlour() {
     const { state: next, rowId } = addFlourRow(state);
     flushSync(() => onChange(next));
-    nameRefs.current.get(rowId)?.focus();
+    flourTypeRefs.current.get(rowId)?.focus();
   }
 
   const isFlourBasis = state.basis === "flour";
@@ -123,6 +126,18 @@ export function HydrationCalculator({ state, evaluation, onChange }: HydrationCa
         <FieldMessage id={BASIS_ERROR_ID} message={evaluation.basisError} />
       </div>
 
+      <label className="flex items-start gap-2 text-zinc-950 dark:text-zinc-50">
+        <input
+          type="checkbox"
+          role="switch"
+          id="adjust-water-on-flour-swap"
+          checked={state.adjustWaterOnFlourSwap}
+          onChange={(event) => onChange(setAdjustWaterOnFlourSwap(state, event.target.checked))}
+          className="mt-1 size-4 shrink-0 accent-zinc-900 dark:accent-zinc-100"
+        />
+        {ADJUST_WATER_ON_FLOUR_SWAP_LABEL}
+      </label>
+
       <ul aria-label={INGREDIENT_LIST_LABEL} className="flex flex-col gap-3">
         {state.rows.map((row) => (
           <li key={row.id}>
@@ -136,10 +151,11 @@ export function HydrationCalculator({ state, evaluation, onChange }: HydrationCa
               onStarterHydrationChange={(value) => onChange(setStarterHydration(state, row.id, value))}
               onNameChange={(name) => onChange(setRowName(state, row.id, name))}
               onTypeChange={(type) => onChange(setRowType(state, row.id, type))}
+              onFlourTypeChange={(flourType) => onChange(setRowFlourType(state, row.id, flourType))}
               onRemove={() => onChange(removeRow(state, row.id))}
-              nameInputRef={(element) => {
-                if (element) nameRefs.current.set(row.id, element);
-                else nameRefs.current.delete(row.id);
+              flourTypeSelectRef={(element) => {
+                if (element) flourTypeRefs.current.set(row.id, element);
+                else flourTypeRefs.current.delete(row.id);
               }}
             />
           </li>

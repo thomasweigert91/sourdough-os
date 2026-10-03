@@ -1,4 +1,4 @@
-// Zustand und Auswertung des Hydratations-Rechners (F010). Reine Funktionen, Zahlen ungerundet.
+// Zustand und Auswertung des Hydratations-Rechners (F010, F011). Reine Funktionen, Zahlen ungerundet.
 // Mehrzeilige Rechnungen und alle Meldungstexte kommen aus der Engine (F007/F008).
 import type { IngredientType } from "@/db/schema/recipes";
 import {
@@ -20,6 +20,14 @@ import {
   type GramIngredient,
   type PercentIngredient,
 } from "@/lib/baking-engine/hydration";
+import {
+  DEFAULT_FLOUR_TYPE_ID,
+  OTHER_FLOUR_TYPE_ID,
+  calculateAdjustedWaterForFlourSwap,
+  getFlourType,
+  type FlourPortion,
+  type FlourTypeId,
+} from "@/lib/baking-engine/flour-types";
 import { DEFAULT_INGREDIENT_NAMES } from "./messages";
 
 export type BasisMode = "flour" | "dough";
@@ -36,6 +44,8 @@ export interface RecipeRow {
   percent: number;
   /** Für alle Zeilen gespeichert (Standard 100), ausgewertet nur bei type "starter". */
   starterHydration: number;
+  /** Mehlzeilen: Katalog-Schlüssel (nie null bei Zeilen aus dieser App). Alle anderen Zeilen: null. */
+  flourType: FlourTypeId | null;
 }
 
 export interface RecipeState {
@@ -45,6 +55,8 @@ export interface RecipeState {
   /** Ziel-Teiggewicht W in g (Basis „Ziel-Teiggewicht“). */
   doughWeight: number;
   rows: RecipeRow[];
+  /** Schalter „Wassermenge bei Mehlwechsel automatisch an Konsistenz anpassen (Empfehlung)“, Standard true. */
+  adjustWaterOnFlourSwap: boolean;
 }
 
 export interface RecipeEvaluation {
@@ -156,8 +168,25 @@ function nextRowId(state: RecipeState): string {
   return `row-${max + 1}`;
 }
 
+/**
+ * Zeilenname zu einem Mehltyp: Katalogname, bei „Sonstiges Mehl“ leer (freier Name, AC-10).
+ * Der Katalogname im Feld name hält gemerkte Stände auch für ältere Versionen lesbar.
+ */
+function flourRowName(flourType: FlourTypeId): string {
+  return flourType === OTHER_FLOUR_TYPE_ID ? "" : getFlourType(flourType).name;
+}
+
 function newRow(id: string, type: IngredientType): RecipeRow {
-  return { id, name: "", type, grams: 0, percent: 0, starterHydration: DEFAULT_ROW_STARTER_HYDRATION };
+  const flourType = type === "flour" ? DEFAULT_FLOUR_TYPE_ID : null;
+  return {
+    id,
+    name: flourType === null ? "" : flourRowName(flourType),
+    type,
+    grams: 0,
+    percent: 0,
+    starterHydration: DEFAULT_ROW_STARTER_HYDRATION,
+    flourType,
+  };
 }
 
 export function createReferenceRecipe(): RecipeState {
@@ -166,6 +195,7 @@ export function createReferenceRecipe(): RecipeState {
     name: string,
     type: IngredientType,
     percent: number,
+    flourType: FlourTypeId | null = null,
   ): RecipeRow => ({
     id: `row-${id}`,
     name,
@@ -173,18 +203,20 @@ export function createReferenceRecipe(): RecipeState {
     grams: gramsFromPercent(1000, percent),
     percent,
     starterHydration: DEFAULT_ROW_STARTER_HYDRATION,
+    flourType,
   });
   return {
     basis: "flour",
     flourBasis: 1000,
     doughWeight: 1920,
     rows: [
-      row(1, "Weizenmehl", "flour", 80),
-      row(2, "Roggenmehl", "flour", 20),
+      row(1, flourRowName("wheat_550"), "flour", 80, "wheat_550"),
+      row(2, flourRowName("rye_1150"), "flour", 20, "rye_1150"),
       row(3, "Wasser", "water", 70),
       row(4, "Starter", "starter", 20),
       row(5, "Salz", "salt", 2),
     ],
+    adjustWaterOnFlourSwap: true,
   };
 }
 
@@ -280,6 +312,48 @@ export function setRowType(state: RecipeState, rowId: string, type: AdditiveType
   };
 }
 
+function flourPortions(rows: readonly RecipeRow[]): FlourPortion[] {
+  return rows
+    .filter((row) => row.type === "flour")
+    .map((row) => ({ flourType: row.flourType ?? OTHER_FLOUR_TYPE_ID, amountGrams: row.grams }));
+}
+
+/**
+ * Wechselt den Mehltyp einer Mehlzeile. Bei eingeschaltetem Schalter wird das Wasser-Bäckerprozent mit
+ * „Absorption nachher / Absorption vorher“ angepasst (AC-4); Gramm folgen aus der gewählten Basis (AC-7).
+ * Keine Anpassung bei ausgeschaltetem Schalter (AC-6) oder solange das Rezept eine Meldung zeigt (AC-8).
+ */
+export function setRowFlourType(state: RecipeState, rowId: string, flourType: FlourTypeId): RecipeState {
+  const target = state.rows.find((row) => row.id === rowId);
+  if (!target || target.type !== "flour" || target.flourType === flourType) return state;
+
+  const swapped = updateRow(state.rows, rowId, (row) => ({ ...row, flourType, name: flourRowName(flourType) }));
+  const next: RecipeState = { ...state, rows: swapped };
+  if (!state.adjustWaterOnFlourSwap || !evaluateRecipe(state).isValid) return next;
+
+  const before = flourPortions(state.rows);
+  const after = flourPortions(swapped);
+  const adjusted = swapped.map((row) =>
+    row.type === "water"
+      ? { ...row, percent: calculateAdjustedWaterForFlourSwap(before, after, row.percent) }
+      : row,
+  );
+
+  if (state.basis === "flour") {
+    const rows = adjusted.map((row) =>
+      row.type === "water" ? { ...row, grams: gramsFromPercent(state.flourBasis, row.percent) } : row,
+    );
+    return withRows(state, rows);
+  }
+  // Ziel-Teiggewicht bleibt fest, alle Gramm und die Mehlbasis folgen aus den Prozenten.
+  return setBasisValue({ ...state, rows: adjusted }, state.doughWeight);
+}
+
+/** Schaltet die automatische Wasseranpassung um, ohne Gramm oder Prozent zu ändern (AC-3, AC-6). */
+export function setAdjustWaterOnFlourSwap(state: RecipeState, enabled: boolean): RecipeState {
+  return { ...state, adjustWaterOnFlourSwap: enabled };
+}
+
 export function addFlourRow(state: RecipeState): { state: RecipeState; rowId: string } {
   const rowId = nextRowId(state);
   const lastFlourIndex = state.rows.findLastIndex((row) => row.type === "flour");
@@ -309,9 +383,17 @@ export function removeRow(state: RecipeState, rowId: string): RecipeState {
   return reapplyPendingDoughWeight(state, withRows(state, rows));
 }
 
-/** Name getrimmt, leer → Typname ("Mehl", "Wasser", "Starter", "Salz", "Sonstiges"). */
+/**
+ * Mehlzeilen mit Katalog-Mehltyp: Katalogname. „Sonstiges Mehl“: freier Name getrimmt, leer → „Sonstiges Mehl“.
+ * Sonst Name getrimmt, leer → Typname ("Mehl", "Wasser", "Starter", "Salz", "Sonstiges").
+ */
 export function ingredientDisplayName(row: RecipeRow): string {
   const trimmed = row.name.trim();
+  if (row.type === "flour" && row.flourType !== null) {
+    const flour = getFlourType(row.flourType);
+    if (row.flourType !== OTHER_FLOUR_TYPE_ID) return flour.name;
+    return trimmed === "" ? flour.name : trimmed;
+  }
   return trimmed === "" ? DEFAULT_INGREDIENT_NAMES[row.type] : trimmed;
 }
 

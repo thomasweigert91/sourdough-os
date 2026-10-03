@@ -1,7 +1,15 @@
-// Lokal gemerkter Stand des Rechners mit Besitzer-Marker (F010, AC-10). Eigener localStorage-Schlüssel,
+// Lokal gemerkter Stand des Rechners mit Besitzer-Marker (F010, AC-10; Mehltyp und Schalter ab F011). Eigener localStorage-Schlüssel,
 // damit ein Gast-Stand das Leeren des Query-Caches beim Abmelden übersteht.
 import type { IngredientType } from "@/db/schema/recipes";
 import type { KneadingMethod } from "@/lib/baking-engine/ddt";
+import {
+  OTHER_FLOUR_TYPE_ID,
+  findFlourTypeByName,
+  getFlourType,
+  isFlourTypeId,
+  normalizeFlourName,
+  type FlourTypeId,
+} from "@/lib/baking-engine/flour-types";
 import type { DdtState } from "./ddt-state";
 import type { BasisMode, RecipeRow, RecipeState } from "./recipe-state";
 
@@ -59,20 +67,45 @@ function parseOwner(value: unknown): CalculatorOwner | null {
   return null;
 }
 
+/**
+ * Mehlnamen aus dem F010-Referenzrezept (normalisiert) → Mehltyp (Ticket F011, Frage 6/7).
+ * Bewusst nur hier und nicht im Katalog-Lookup, damit die Engine frei von Altlasten bleibt.
+ */
+const LEGACY_FLOUR_NAME_ALIASES: ReadonlyMap<string, FlourTypeId> = new Map([
+  ["weizenmehl", "wheat_550"],
+  ["roggenmehl", "rye_1150"],
+]);
+
+/** Zuordnung eines freien F010-Mehlnamens zu Mehltyp und Zeilenname (AC-11). */
+export function migrateLegacyFlourName(name: string): { flourType: FlourTypeId; name: string } {
+  const alias = LEGACY_FLOUR_NAME_ALIASES.get(normalizeFlourName(name));
+  if (alias) return { flourType: alias, name: getFlourType(alias).name };
+  const match = findFlourTypeByName(name);
+  if (match && match.id !== OTHER_FLOUR_TYPE_ID) return { flourType: match.id, name: match.name };
+  if (match || normalizeFlourName(name) === "") return { flourType: OTHER_FLOUR_TYPE_ID, name: "" };
+  return { flourType: OTHER_FLOUR_TYPE_ID, name };
+}
+
 function parseRow(value: unknown): RecipeRow | null {
   if (!isRecord(value)) return null;
-  const { id, name, type, grams, percent, starterHydration } = value;
+  const { id, name, type, grams, percent, starterHydration, flourType } = value;
   if (typeof id !== "string" || typeof name !== "string" || !isOneOf(INGREDIENT_TYPE_VALUES, type)) {
     return null;
   }
   if (!isNumber(grams) || !isNumber(percent) || !isNumber(starterHydration)) return null;
-  return { id, name, type, grams, percent, starterHydration };
+  const base = { id, type, grams, percent, starterHydration };
+  if (type !== "flour") return { ...base, name, flourType: null };
+  // Stand ohne Mehltyp (F010): freien Namen zuordnen, Mengen bleiben unverändert.
+  if (flourType === undefined) return { ...base, ...migrateLegacyFlourName(name) };
+  if (!isFlourTypeId(flourType)) return null;
+  return { ...base, name, flourType };
 }
 
 function parseRecipe(value: unknown): RecipeState | null {
   if (!isRecord(value)) return null;
-  const { basis, flourBasis, doughWeight, rows } = value;
+  const { basis, flourBasis, doughWeight, rows, adjustWaterOnFlourSwap = true } = value;
   if (!isOneOf(BASIS_VALUES, basis) || !isNumber(flourBasis) || !isNumber(doughWeight)) return null;
+  if (typeof adjustWaterOnFlourSwap !== "boolean") return null;
   if (!Array.isArray(rows)) return null;
   const parsed: RecipeRow[] = [];
   for (const raw of rows) {
@@ -83,7 +116,7 @@ function parseRecipe(value: unknown): RecipeState | null {
   if (!parsed.some((row) => row.type === "flour")) return null;
   // IDs dienen als React-key und müssen eindeutig sein.
   if (new Set(parsed.map((row) => row.id)).size !== parsed.length) return null;
-  return { basis, flourBasis, doughWeight, rows: parsed };
+  return { basis, flourBasis, doughWeight, rows: parsed, adjustWaterOnFlourSwap };
 }
 
 function parseDdt(value: unknown): DdtState | null {
