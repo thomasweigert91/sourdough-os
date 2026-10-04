@@ -8,6 +8,11 @@
  * Alle Dauern sind Minuten echter verstrichener Zeit, auch über eine Zeitumstellung hinweg.
  * Die Ortszeit (über die übergebene Zeitzone) wird nur für die Schlaf-Warnung ausgewertet:
  * Ein manueller Schritt warnt, wenn sein Beginn im Schlaf-Fenster liegt.
+ *
+ * Alle Eingaben werden vor jeder Berechnung in fester Reihenfolge geprüft (Zielzeitpunkt, Dauern,
+ * Anzahl und Abstand der Durchgänge, Obergrenze, Durchgänge passen in die Stockgare,
+ * Schlaf-Fenster, Zeitzone); die erste ungültige Angabe wirft eine feste deutsche Meldung.
+ * Der Startzeitpunkt des Plans ist der früheste Beginn aller Phasen.
  */
 
 /** Phasen in fester Reihenfolge (so erscheinen sie im Plan). */
@@ -50,7 +55,7 @@ export const DEFAULT_PHASE_DURATIONS = {
 } as const satisfies PhaseDurations;
 
 export interface StretchAndFoldConfig {
-  /** Anzahl der Durchgänge, ganze Zahl ab 0. */
+  /** Anzahl der Durchgänge, ganze Zahl ab 0, höchstens MAX_STRETCH_AND_FOLD_COUNT. */
   count: number;
   /** Abstand in Minuten, > 0. Erster Durchgang ein Abstand nach Beginn der Stockgare. */
   intervalMinutes: number;
@@ -60,9 +65,13 @@ export const DEFAULT_STRETCH_AND_FOLD = {
   intervalMinutes: 30,
 } as const satisfies StretchAndFoldConfig;
 
+/** Höchstzahl der Dehnen-&-Falten-Durchgänge. */
+export const MAX_STRETCH_AND_FOLD_COUNT = 20;
+
 /**
  * Schlaf-Fenster in Minuten seit Mitternacht (Ortszeit der Zeitzone), Beginn einschließlich,
  * Ende ausschließlich. startMinute > endMinute = über Mitternacht; startMinute === endMinute = leer.
+ * Beide Werte sind ganze Minuten von 0 bis 1439.
  */
 export interface SleepWindow {
   startMinute: number;
@@ -80,7 +89,10 @@ export interface ScheduleConfig {
   durations?: Partial<PhaseDurations>;
   stretchAndFold?: Partial<StretchAndFoldConfig>;
   sleepWindow?: Partial<SleepWindow>;
-  /** IANA-Zeitzone, z. B. "America/New_York". */
+  /**
+   * Zeitzone, z. B. "America/New_York". Gültig ist jede Zeitzone, die die Laufzeit (`Intl`)
+   * akzeptiert; nur `undefined` nimmt den Standard DEFAULT_TIME_ZONE.
+   */
   timeZone?: string;
 }
 
@@ -112,7 +124,7 @@ export interface ScheduleTimeline {
   target: Date;
   /** Beginn der Phase Backen (= target − cool − bake, auch wenn bake 0 ist). */
   bakeStart: Date;
-  /** Beginn der ersten Phase in `phases`; ohne Phasen = target. */
+  /** Frühester Beginn aller Phasen in `phases` (auch des Vorheizens); ohne Phasen = target. */
   start: Date;
   /** Phasen mit Dauer > 0 in der Reihenfolge von PHASE_IDS. */
   phases: SchedulePhase[];
@@ -125,6 +137,11 @@ export const STRETCH_AND_FOLD_DOES_NOT_FIT_MESSAGE =
 /** Nicht im Ticket vorgegeben: ungültige Anzahl oder ungültiger Abstand der Durchgänge. */
 export const INVALID_STRETCH_AND_FOLD_MESSAGE =
   "Anzahl und Abstand der Dehnen-und-Falten-Durchgänge müssen gültige Zahlen sein.";
+export const TOO_MANY_STRETCH_AND_FOLDS_MESSAGE =
+  "Es sind höchstens 20 Dehnen-und-Falten-Durchgänge möglich.";
+export const INVALID_SLEEP_WINDOW_MESSAGE =
+  "Das Schlaf-Fenster muss aus ganzen Minuten zwischen 0 und 1439 bestehen.";
+export const INVALID_TIME_ZONE_MESSAGE = "Die Zeitzone ist ungültig.";
 
 const MS_PER_MINUTE = 60_000;
 
@@ -175,7 +192,7 @@ function resolveConfig(config: ScheduleConfig): ResolvedConfig {
       config.stretchAndFold,
     ),
     sleepWindow: mergeDefined<SleepWindow>(DEFAULT_SLEEP_WINDOW, config.sleepWindow),
-    timeZone: config.timeZone ?? DEFAULT_TIME_ZONE,
+    timeZone: config.timeZone === undefined ? DEFAULT_TIME_ZONE : config.timeZone,
   };
 }
 
@@ -203,10 +220,35 @@ function validate(targetDate: Date, resolved: ResolvedConfig): void {
     throw new Error(INVALID_STRETCH_AND_FOLD_MESSAGE);
   }
 
+  if (count > MAX_STRETCH_AND_FOLD_COUNT) {
+    throw new Error(TOO_MANY_STRETCH_AND_FOLDS_MESSAGE);
+  }
+
   // Der letzte Durchgang muss echt vor dem Ende der Stockgare liegen.
   if (count > 0 && count * intervalMinutes >= resolved.durations.bulkFermentation) {
     throw new Error(STRETCH_AND_FOLD_DOES_NOT_FIT_MESSAGE);
   }
+
+  const { startMinute, endMinute } = resolved.sleepWindow;
+  if (!isValidMinuteOfDay(startMinute) || !isValidMinuteOfDay(endMinute)) {
+    throw new Error(INVALID_SLEEP_WINDOW_MESSAGE);
+  }
+
+  const { timeZone } = resolved;
+  if (typeof timeZone !== "string") {
+    throw new Error(INVALID_TIME_ZONE_MESSAGE);
+  }
+  try {
+    // Erzeugt (und cacht) den Formatter; Intl wirft bei unbekannter Zeitzone einen RangeError.
+    timeFormatter(timeZone);
+  } catch {
+    throw new Error(INVALID_TIME_ZONE_MESSAGE);
+  }
+}
+
+/** Ganze Minute des Tages von 0 bis 1439. */
+function isValidMinuteOfDay(value: unknown): boolean {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 1439;
 }
 
 const timeFormatters = new Map<string, Intl.DateTimeFormat>();
@@ -253,10 +295,11 @@ interface PhaseInterval {
  * Erzeugt einen Ablaufplan rückwärts vom Zielzeitpunkt (Ende des Auskühlens).
  * Die Hauptkette ist lückenlos, Phasen mit Dauer 0 entfallen. Manuelle Schritte, deren Beginn
  * im Schlaf-Fenster liegt, tragen eine Schlaf-Warnung. Wirft bei ungültigen Eingaben.
+ * Konfiguration optional; ohne zweites Argument gilt dasselbe wie mit `{}`.
  */
 export function generateBackwardSchedule(
   targetDate: Date,
-  config: ScheduleConfig,
+  config: ScheduleConfig = {},
 ): ScheduleTimeline {
   const resolved = resolveConfig(config);
   validate(targetDate, resolved);
@@ -317,7 +360,7 @@ export function generateBackwardSchedule(
   return {
     target: new Date(targetMs),
     bakeStart: new Date(bakeStartMs),
-    start: new Date(phases[0]?.start.getTime() ?? targetMs),
+    start: new Date(phases.reduce((min, p) => Math.min(min, p.start.getTime()), targetMs)),
     phases,
   };
 }
