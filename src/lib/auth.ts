@@ -4,7 +4,7 @@ import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { db } from "@/db";
 import { account, session, user, verification } from "@/db/schema";
-import { getAuthEnv, getSocialProviders } from "./auth-env";
+import { getAuthEnv, getSocialProviders, getTrustedOrigins } from "./auth-env";
 
 // getAuthEnv() läuft beim Laden des Moduls: Ohne gültige BETTER_AUTH_*-Variablen scheitert schon der Import.
 const { secret, url } = getAuthEnv();
@@ -13,6 +13,8 @@ const { github, google } = getSocialProviders();
 export const auth = betterAuth({
   secret,
   baseURL: url,
+  // Vercel-Previews laufen unter wechselnden Adressen; ohne diese Liste meldet Better Auth "Invalid origin".
+  trustedOrigins: getTrustedOrigins(),
   // neon-http kennt keine Transaktionen; der Adapter läuft mit dem Standard (transaction: false).
   database: drizzleAdapter(db, {
     provider: "pg",

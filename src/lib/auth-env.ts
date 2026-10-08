@@ -64,6 +64,36 @@ export function getAuthEnv(): AuthEnv {
   return { secret, url };
 }
 
+function toOrigin(value: string): string | undefined {
+  // Vercel liefert VERCEL_URL und VERCEL_BRANCH_URL ohne Protokoll.
+  const withProtocol = /^https?:\/\//i.test(value) ? value : `https://${value}`;
+  try {
+    return new URL(withProtocol).origin;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Weitere erlaubte Origins neben BETTER_AUTH_URL: die Adressen des aktuellen
+ * Vercel-Deployments (VERCEL_URL, VERCEL_BRANCH_URL) und optional
+ * BETTER_AUTH_TRUSTED_ORIGINS (kommagetrennt). Ungültige Einträge entfallen. Wirft nie.
+ */
+export function getTrustedOrigins(): string[] {
+  const candidates = [
+    readNonEmpty("VERCEL_URL"),
+    readNonEmpty("VERCEL_BRANCH_URL"),
+    ...(readNonEmpty("BETTER_AUTH_TRUSTED_ORIGINS")?.split(",") ?? []),
+  ];
+  const origins = new Set<string>();
+  for (const candidate of candidates) {
+    const trimmed = candidate?.trim();
+    const origin = trimmed ? toOrigin(trimmed) : undefined;
+    if (origin !== undefined) origins.add(origin);
+  }
+  return [...origins];
+}
+
 function readCredentials(
   idName: string,
   secretName: string,

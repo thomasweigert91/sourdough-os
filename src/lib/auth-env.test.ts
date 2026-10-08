@@ -206,4 +206,47 @@ describe("F003 Auth-Umgebung (@/lib/auth-env)", () => {
       });
     });
   });
+
+  describe("getTrustedOrigins", () => {
+    beforeEach(() => {
+      vi.stubEnv("VERCEL_URL", undefined);
+      vi.stubEnv("VERCEL_BRANCH_URL", undefined);
+      vi.stubEnv("BETTER_AUTH_TRUSTED_ORIGINS", undefined);
+    });
+
+    it("liefert ohne Variablen eine leere Liste und wirft nicht", async () => {
+      const { getTrustedOrigins } = await loadEnvModule();
+
+      expect(getTrustedOrigins()).toEqual([]);
+    });
+
+    it("ergänzt bei VERCEL_URL und VERCEL_BRANCH_URL das fehlende https://", async () => {
+      vi.stubEnv("VERCEL_URL", "sourdough-os-abc123-team.vercel.app");
+      vi.stubEnv("VERCEL_BRANCH_URL", "sourdough-os-git-feature-team.vercel.app");
+      const { getTrustedOrigins } = await loadEnvModule();
+
+      expect(getTrustedOrigins()).toEqual([
+        "https://sourdough-os-abc123-team.vercel.app",
+        "https://sourdough-os-git-feature-team.vercel.app",
+      ]);
+    });
+
+    it("liest BETTER_AUTH_TRUSTED_ORIGINS kommagetrennt, kürzt auf den Origin und entfernt Doppelte", async () => {
+      vi.stubEnv("VERCEL_URL", "brot.example.com");
+      vi.stubEnv(
+        "BETTER_AUTH_TRUSTED_ORIGINS",
+        " https://brot.example.com/pfad , http://localhost:3001 ,, ",
+      );
+      const { getTrustedOrigins } = await loadEnvModule();
+
+      expect(getTrustedOrigins()).toEqual(["https://brot.example.com", "http://localhost:3001"]);
+    });
+
+    it("lässt ungültige Einträge weg", async () => {
+      vi.stubEnv("BETTER_AUTH_TRUSTED_ORIGINS", "https://ok.example.com,http://[ungültig");
+      const { getTrustedOrigins } = await loadEnvModule();
+
+      expect(getTrustedOrigins()).toEqual(["https://ok.example.com"]);
+    });
+  });
 });
