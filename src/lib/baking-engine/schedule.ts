@@ -143,9 +143,11 @@ export const INVALID_SLEEP_WINDOW_MESSAGE =
   "Das Schlaf-Fenster muss aus ganzen Minuten zwischen 0 und 1439 bestehen.";
 export const INVALID_TIME_ZONE_MESSAGE = "Die Zeitzone ist ungültig.";
 
-const MS_PER_MINUTE = 60_000;
+/** Intern, für recalibrate.ts. */
+export const MS_PER_MINUTE = 60_000;
 
-const MANUAL_PHASES: ReadonlySet<PhaseId> = new Set<PhaseId>([
+/** Intern, für recalibrate.ts. */
+export const MANUAL_PHASES: ReadonlySet<PhaseId> = new Set<PhaseId>([
   "levain",
   "mixAutolyse",
   "shaping",
@@ -171,8 +173,8 @@ interface ResolvedConfig {
   timeZone: string;
 }
 
-/** Überschreibt `defaults` mit allen Werten aus `overrides`, die nicht `undefined` sind. */
-function mergeDefined<T extends object>(defaults: T, overrides: Partial<T> | undefined): T {
+/** Überschreibt `defaults` mit allen Werten aus `overrides`, die nicht `undefined` sind. Intern, für recalibrate.ts. */
+export function mergeDefined<T extends object>(defaults: T, overrides: Partial<T> | undefined): T {
   const result: T = { ...defaults };
   if (!overrides) return result;
   for (const key of Object.keys(defaults) as (keyof T)[]) {
@@ -246,14 +248,15 @@ function validate(targetDate: Date, resolved: ResolvedConfig): void {
   }
 }
 
-/** Ganze Minute des Tages von 0 bis 1439. */
-function isValidMinuteOfDay(value: unknown): boolean {
+/** Ganze Minute des Tages von 0 bis 1439. Intern, für recalibrate.ts. */
+export function isValidMinuteOfDay(value: unknown): boolean {
   return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 1439;
 }
 
 const timeFormatters = new Map<string, Intl.DateTimeFormat>();
 
-function timeFormatter(timeZone: string): Intl.DateTimeFormat {
+/** Intern, für recalibrate.ts. */
+export function timeFormatter(timeZone: string): Intl.DateTimeFormat {
   let cached = timeFormatters.get(timeZone);
   if (!cached) {
     cached = new Intl.DateTimeFormat("en-US", {
@@ -267,8 +270,8 @@ function timeFormatter(timeZone: string): Intl.DateTimeFormat {
   return cached;
 }
 
-/** Minute des Tages (0–1439) in der Ortszeit von `timeZone`. */
-function localMinuteOfDay(date: Date, timeZone: string): number {
+/** Minute des Tages (0–1439) in der Ortszeit von `timeZone`. Intern, für recalibrate.ts. */
+export function localMinuteOfDay(date: Date, timeZone: string): number {
   let hour = 0;
   let minute = 0;
   for (const part of timeFormatter(timeZone).formatToParts(date)) {
@@ -278,8 +281,8 @@ function localMinuteOfDay(date: Date, timeZone: string): number {
   return hour * 60 + minute;
 }
 
-/** Beginn einschließlich, Ende ausschließlich; Fenster über Mitternacht möglich; gleich = leer. */
-function isInSleepWindow(minute: number, window: SleepWindow): boolean {
+/** Beginn einschließlich, Ende ausschließlich; Fenster über Mitternacht möglich; gleich = leer. Intern, für recalibrate.ts. */
+export function isInSleepWindow(minute: number, window: SleepWindow): boolean {
   const { startMinute, endMinute } = window;
   if (startMinute < endMinute) return minute >= startMinute && minute < endMinute;
   if (startMinute > endMinute) return minute >= startMinute || minute < endMinute;

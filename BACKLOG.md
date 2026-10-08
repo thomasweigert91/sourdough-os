@@ -21,6 +21,12 @@
   - [ ] Schema `baking_schedules` und `schedule_steps` (mit Neon-Abnahme)
   - [x] Reine Funktion `generateBackwardSchedule` mit Tests (Zeitzone, Schlaf-Fenster, Standarddauern klären)
 - [ ] Weitere Mehle: Weizen 812, Dinkel 812/1050, Hartweizen, Urgetreide (bei Bedarf)
+- [ ] F014: Live-Rekalibrierung in die Oberfläche bringen (setzt das Schema oben voraus):
+  - [ ] Timeline-Ansicht mit Button „Schritt jetzt erledigt“, Konfliktwarnung (`role="alert"`) und Lösungsvorschlag als Button
+  - [ ] Server-Action zum Speichern des rekalibrierten Plans
+  - [ ] Einstellungen für Schlaf-Fenster sowie Mindest- und Max-Kaltgare
+- [ ] F014: Temperatur-Ausgleich als weitere Strategie (braucht ein Modell Temperatur zu Gärdauer)
+- [ ] F014: Fehlertexte bestätigen, die nicht im Ticket stehen: „Die Strategie ist nicht bekannt.“, „Der Abschlusszeitpunkt darf nicht vor dem Beginn des Schritts liegen.“
 
 ### Technische Schulden
 
@@ -30,6 +36,10 @@
 - [ ] F013: `generateBackwardSchedule(target, null)` wirft englischen TypeError (Standard greift nur bei `undefined`). Niedrige Priorität: Die eigene Server-Action übergibt nie `null`.
 - [ ] F013: `durations`, `stretchAndFold` oder `sleepWindow` als Ganzes mit `null` nehmen still den Standard, einzelne Felder mit `null` werden abgelehnt (inkonsistent). Niedrige Priorität, gleicher Aufrufweg.
 - [ ] F013: Sehr große Phasendauern (z. B. 1e12) enden in englischem `RangeError: Invalid time value`. Wird in der Server-Action (F014a) per AC abgefangen: jede Dauer höchstens 10 080 Min. (7 Tage).
+- [ ] F014 (Review-Runde 2, MINOR): Durchgang lässt sich vor Beginn der Stockgare oder vor einem früheren erledigten Durchgang als erledigt markieren
+- [ ] F014 (Review-Runde 2, MINOR): `applySuggestion` prüft nicht, ob der Vorschlag zum aktuellen Plan gehört; ein veralteter Vorschlag kann die Kaltgare unter das Minimum kürzen
+- [ ] F014 (Review-Runde 2, MINOR): Test fehlt für „Kaltgare schon unter Mindest-Kaltgare, nur verschieben“ mit Standardstrategie
+- [ ] F014 (Review-Runde 2, NIT): zweites Parken nicht gegen frühere Parkintervalle geprüft; Park-Gutschrift nicht auf Minuten gerundet; interne Helfer in `schedule.ts` öffentlich exportiert; zwei Typ-Casts in `recalibrate.ts`
 
 ## Blueprint (Projekt D:\code\react-feature-workflow)
 
